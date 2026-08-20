@@ -10,5 +10,5 @@ Study on the creation and adaptation of machine learning models leveraging the d
 * TSFlow
 * ADiff4TPP
 
-**Author:** Le Petit Adrien
+**Author:** Le Petit Adrien  
 **Release:** 2026
