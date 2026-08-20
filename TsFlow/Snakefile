@@ -1,0 +1,60 @@
+# =============================================================================
+# 1. DÉFINITION DES CONFIGURATIONS (PLAN D'EXPÉRIENCE)
+# =============================================================================
+
+CONFIGS = {
+    # La Baseline (Référence)
+    "baseline":       {"hd": 128, "ns": 16, "bs": 128,  "wd": 0.001, "g": 1.0, "cce": 0.1},
+    
+    # Variations de la dimension cachée (hidden_dim)
+    "hd_64":          {"hd": 64,  "ns": 16, "bs": 128,  "wd": 0.001, "g": 1.0, "cce": 0.1},
+    "hd_256":         {"hd": 256, "ns": 16, "bs": 128,  "wd": 0.001, "g": 1.0, "cce": 0.1},
+    
+    # Variations du nombre de pas de débruitage (num_steps)
+    "steps_32":       {"hd": 128, "ns": 32, "bs": 128,  "wd": 0.001, "g": 1.0, "cce": 0.1},
+    
+    # Variations de la taille de Batch (batch_size)
+    "batch_64":      {"hd": 128, "ns": 16, "bs": 64, "wd": 0.001, "g": 1.0, "cce": 0.1},
+    "batch_256":      {"hd": 128, "ns": 16, "bs": 256, "wd": 0.001, "g": 1.0, "cce": 0.1},
+    
+    # Variations du Weight Decay
+    "wd_1e4":         {"hd": 128, "ns": 16, "bs": 128,  "wd": 0.0,"g": 1.0, "cce": 0.1},
+    
+    # Variations de Gamma (prior)
+    "gamma_01":       {"hd": 128, "ns": 16, "bs": 128,  "wd": 0.001, "g": 0.1, "cce": 0.1},
+    "gamma_10":       {"hd": 128, "ns": 16, "bs": 128,  "wd": 0.001, "g": 10.0, "cce": 0.1},
+
+    # Variations de CCE
+    "cce_05":       {"hd": 128, "ns": 16, "bs": 128,  "wd": 0.001, "g": 1.0, "cce": 0.01},
+    "cce_5":       {"hd": 128, "ns": 16, "bs": 128,  "wd": 0.001, "g": 1.0, "cce": 0.5},
+}
+
+# =============================================================================
+# 2. RÈGLES SNAKEMAKE
+# =============================================================================
+
+rule all:
+    input:
+        [
+            f"checkpoints_pred16_hist32_hd{c['hd']}_ns{c['ns']}_bs{c['bs']}_wd{c['wd']}_g{c['g']}_cce{c['cce']}/gen_data.npy"
+            for c in CONFIGS.values()
+        ]
+
+rule train_tsflow:
+    output:
+        real = "checkpoints_pred16_hist32_hd{hd}_ns{ns}_bs{bs}_wd{wd}_g{g}_cce{cce}/real_data.npy",
+        gen  = "checkpoints_pred16_hist32_hd{hd}_ns{ns}_bs{bs}_wd{wd}_g{g}_cce{cce}/gen_data.npy"
+    log:
+        "checkpoints_pred16_hist32_hd{hd}_ns{ns}_bs{bs}_wd{wd}_g{g}_cce{cce}/training.log"
+    resources:
+        gpu=1
+    shell:
+        """
+        python3 -u ts_train_with_cat_final.py \
+            --hidden_dim {wildcards.hd} \
+            --num_steps {wildcards.ns} \
+            --batch_size {wildcards.bs} \
+            --weight_decay {wildcards.wd} \
+            --gamma {wildcards.g} \
+            --cce {wildcards.cce} > {log} 2>&1
+        """

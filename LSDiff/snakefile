@@ -1,0 +1,215 @@
+import os
+import yaml
+import json
+from copy import deepcopy
+
+# Chargement du config de base
+with open("config.yaml", "r") as f:
+    base_config = yaml.safe_load(f)
+
+# ----------------------------------------------------------------------
+# Définition des expériences (une par paramètre varié)
+# ----------------------------------------------------------------------
+experiments = []
+
+# Variations pour les VAEs (modifient à la fois autoencoder et history_autoencoder)
+vae_variations = [
+    # Paramètres couplés (enc_hidden_dims ET dec_hidden_dims)
+    {"params": [("autoencoder", "enc_hidden_dims", [64, 128]), 
+                ("autoencoder", "dec_hidden_dims", [128, 64, 32])], 
+     "name": "vae_enc64_dec128"},
+    
+    # Paramètres simples (un seul)
+    {"params": ("autoencoder", "num_heads", 8), "name": "vae_nh_8"},
+    {"params": ("autoencoder", "num_heads", 16), "name": "vae_nh_16"},
+    {"params": ("autoencoder", "num_groups", 4), "name": "vae_ng_4"},
+    {"params": ("autoencoder", "num_groups", 16), "name": "vae_ng_16"},
+    {"params": ("autoencoder", "num_groups", 32), "name": "vae_ng_32"},
+    {"params": ("training", "lr_vae", 1e-5), "name": "vae_lr_1e-5"},
+    {"params": ("training", "lr_vae", 1e-3), "name": "vae_lr_1e-3"},
+]
+
+# Variations pour la Diffusion
+diff_variations = [
+    {"params": ("diffusion", "embed_dim", 256), "name": "diff_embed_256"},
+    {"params": ("diffusion", "embed_dim", 768), "name": "diff_embed_768"},
+    {"params": ("diffusion", "num_heads", 8), "name": "diff_nh_8"},
+    {"params": ("diffusion", "num_heads", 12), "name": "diff_nh_12"},
+    {"params": ("diffusion", "num_layers", 4), "name": "diff_layers_4"},
+    {"params": ("diffusion", "num_layers", 8), "name": "diff_layers_8"},
+    {"params": ("diffusion", "cfg_dropout", 0.10), "name": "diff_cfgdrop_0.10"},
+    {"params": ("diffusion", "cfg_dropout", 0.15), "name": "diff_cfgdrop_0.15"},
+    {"params": ("diffusion", "cfg_scale", 1.0), "name": "diff_cfgscale_1.0"},
+    {"params": ("diffusion", "cfg_scale", 4.0), "name": "diff_cfgscale_4.0"},
+    {"params": ("training", "lr_diffusion", 1e-4), "name": "diff_lr_1e-4"},
+    {"params": ("training", "lr_diffusion", 5e-4), "name": "diff_lr_5e-4"},
+]
+
+experiments.extend(vae_variations)
+experiments.extend(diff_variations)
+
+# Baseline
+experiments.append({"params": None, "name": "baseline"})
+
+exp_mods = {}
+for e in experiments:
+    exp_mods[e["name"]] = e["params"]
+
+def extract_params(exp):
+    """Extrait une liste de (chemin, clé, valeur) depuis un objet expérience."""
+    params = exp["params"]
+    if params is None:
+        return []
+    
+    # Si c'est un tuple de 3 éléments, c'est un paramètre simple
+    if isinstance(params, tuple) and len(params) == 3:
+        path, key, value = params
+        # S'assurer que path est un tuple
+        if isinstance(path, str):
+            path = (path,)
+        return [(path, key, value)]
+    
+    # Si c'est une liste, c'est un ou plusieurs paramètres
+    elif isinstance(params, list):
+        result = []
+        for item in params:
+            if isinstance(item, tuple) and len(item) == 3:
+                path, key, value = item
+                # S'assurer que path est un tuple
+                if isinstance(path, str):
+                    path = (path,)
+                result.append((path, key, value))
+            else:
+                raise ValueError(f"Format invalide dans la liste : {item}")
+        return result
+    
+    else:
+        raise ValueError(f"Format de params invalide : {params}")
+
+def generate_config(exp_name, output_path):
+    # Récupérer l'expérience
+    exp = next(e for e in experiments if e["name"] == exp_name)
+    mods = extract_params(exp)
+    
+    new_config = deepcopy(base_config)
+    
+    # Appliquer chaque modification
+    for mod_path, mod_key, mod_value in mods:
+        # mod_path est un tuple de clés (ex: ("autoencoder", "enc_hidden_dims"))
+        target = new_config
+        for key in mod_path:
+            target = target[key]
+        target[mod_key] = mod_value
+        
+        # Si la modification porte sur autoencoder, on applique aussi à history_autoencoder
+        if mod_path[0] == "autoencoder":
+            hist_target = new_config["history_autoencoder"]
+            for key in mod_path[1:]:
+                hist_target = hist_target[key]
+            hist_target[mod_key] = mod_value
+
+    # Redéfinir tous les chemins pour qu'ils pointent dans le dossier de l'expérience
+    exp_dir = f"results/{exp_name}"
+    checkpoints_dir = f"{exp_dir}/checkpoints"
+
+    # VAE principal
+    new_config["autoencoder"]["scaler_path"] = f"{checkpoints_dir}/main_scaler.pkl"
+    new_config["autoencoder"]["checkpoint_path"] = f"{checkpoints_dir}/vae_main.pth"
+    new_config["autoencoder"]["best_model_path"] = f"{checkpoints_dir}/vae_main_best.pth"
+
+    # HistVAE
+    new_config["history_autoencoder"]["hist_scaler_path"] = f"{checkpoints_dir}/hist_scaler.pkl"
+    new_config["history_autoencoder"]["checkpoint_path"] = f"{checkpoints_dir}/vae_history.pth"
+    new_config["history_autoencoder"]["best_model_path"] = f"{checkpoints_dir}/vae_history_best.pth"
+
+    # Diffusion
+    new_config["diffusion"]["latent_scale_path"] = f"{checkpoints_dir}/latent_scale.npy"
+    new_config["diffusion"]["hist_latent_scale_path"] = f"{checkpoints_dir}/hist_latent_scale.npy"
+    new_config["diffusion"]["checkpoint_path"] = f"{checkpoints_dir}/diffusion.pth"
+    new_config["diffusion"]["best_model_path"] = f"{checkpoints_dir}/diffusion_best.pth"
+
+    # Écrire le fichier
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as f:
+        yaml.dump(new_config, f, default_flow_style=False)
+
+# ----------------------------------------------------------------------
+# Règles Snakemake
+# ----------------------------------------------------------------------
+rule all:
+    input:
+        expand("results/{exp}/done.txt", exp=exp_mods.keys())
+
+# Génération du fichier config pour chaque expérience
+rule generate_config:
+    output:
+        config_file = "results/{exp}/config.yaml"
+    run:
+        generate_config(wildcards.exp, output.config_file)
+
+# Entraînement du VAE principal
+rule train_vae_main:
+    input:
+        config = "results/{exp}/config.yaml"
+    output:
+        best_model = "results/{exp}/checkpoints/vae_main_best.pth",
+        checkpoint = "results/{exp}/checkpoints/vae_main.pth",
+        scaler = "results/{exp}/checkpoints/main_scaler.pkl",
+        evaluation = "results/{exp}/checkpoints/main/evaluation.txt",
+        population_distribution = "results/{exp}/checkpoints/main/population_distribution.png"
+    log:
+        "results/{exp}/logs/train_vae_main.log"
+    shell:
+        """
+        python train_VAE.py --mode main --config {input.config} > {log} 2>&1
+        """
+
+# Entraînement du HistVAE
+rule train_vae_history:
+    input:
+        config = "results/{exp}/config.yaml"
+    output:
+        best_model = "results/{exp}/checkpoints/vae_history_best.pth",
+        checkpoint = "results/{exp}/checkpoints/vae_history.pth",
+        scaler = "results/{exp}/checkpoints/hist_scaler.pkl",
+        evaluation = "results/{exp}/checkpoints/history/evaluation.txt",
+        population_distribution = "results/{exp}/checkpoints/history/population_distribution.png"
+    log:
+        "results/{exp}/logs/train_vae_history.log"
+    shell:
+        """
+        python train_VAE.py --mode history --config {input.config} > {log} 2>&1
+        """
+
+# Entraînement de la diffusion (dépend des deux VAE)
+rule train_diffusion:
+    input:
+        config = "results/{exp}/config.yaml",
+        vae_main = "results/{exp}/checkpoints/vae_main_best.pth",
+        vae_history = "results/{exp}/checkpoints/vae_history_best.pth"
+    output:
+        best_model = "results/{exp}/checkpoints/diffusion_best.pth",
+        checkpoint = "results/{exp}/checkpoints/diffusion.pth",
+        latent_scale = "results/{exp}/checkpoints/latent_scale.npy",
+        hist_latent_scale = "results/{exp}/checkpoints/hist_latent_scale.npy",
+        gen_data = "results/{exp}/checkpoints/gen_data_diffusion.npy",
+        real_data = "results/{exp}/checkpoints/real_data_diffusion.npy",
+        eval_txt = "results/{exp}/checkpoints/diffusion/evaluation.txt",
+        dist_plot = "results/{exp}/checkpoints/diffusion/population_distribution.png"
+    log:
+        "results/{exp}/logs/train_diffusion.log"
+    shell:
+        """
+        python train_DiT.py --config {input.config} > {log} 2>&1
+        """
+
+# Fichier de marqueur de fin pour chaque expérience
+rule done:
+    input:
+        # On attend que tous les outputs de diffusion soient produits
+        train_diffusion_outputs = rules.train_diffusion.output
+    output:
+        done = "results/{exp}/done.txt"
+    run:
+        with open(output.done, "w") as f:
+            f.write("Done")

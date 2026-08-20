@@ -1,0 +1,35 @@
+backbone_params:
+  dropout: 0.1
+  feature_skip: true
+  hidden_dim: 64
+  init_skip: false
+  input_dim: 1
+  num_residual_blocks: 4
+  output_dim: 10
+  residual_block: s4
+  step_emb: 64
+cce_weight: 0.1
+context_length: 32
+ema_params:
+  beta: 0.9999
+  update_after_step: 5
+  update_every: 1
+event_dim: 8
+frequency: 30s
+matching: random
+normalization: mean
+num_steps: 16
+optimizer_params:
+  lr: 0.0005
+  weight_decay: 0.001
+prediction_length: 16
+prior_params:
+  context_freqs: 2
+  gamma: 1.0
+  kernel: ou
+setting: multivariate
+sigm: 0.001
+solver: euler
+target_dim: 10
+use_ema: true
+use_lags: false

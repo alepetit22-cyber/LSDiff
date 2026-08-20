@@ -1,0 +1,96 @@
+# Configuration globale pour le modèle
+
+dataset:
+  json_path: "../Data/db_meta_propre.json"
+  num_features: 8                                                             # FC, PAS, PAM, PAD, temp, SpO2, FR, event_code
+  normalization: "standard"
+  features_indices:
+    - type: "continuous"
+      index: [1,2,3,4,5,6]
+    - type: "discrete"
+      index: [7]
+    - type: "categorical"
+      index: [8]
+      cat_embed_dim: 6                                                         # Nombre de dimension de projection de la variable catégorielle
+      cat_seed: 42
+  cat_mode: "duplicated"                                                      # Sélection du mode d'embedding de la variable catégorielle
+  event_code_index: []                                                        # Liste des index event_code dans le fichier brut
+  meta_config:                                                                # Configuration des métadonnées
+    - name: "patient_class"
+      type: "categorical"
+      num_classes: 30
+    - name: "surgery_type"
+      type: "categorical"
+      num_classes: 4
+  target_len: 16                                                              # Longueur temporelle des séquences (Time steps)
+  hist_len: 32                                                                # Longueur temporelle de l'historique
+  
+# VAE de la prédiction
+autoencoder:
+  latent_channel : 24                                                         # Dimension de l'espace compressé (Z)
+  seq_len: 16                                                                 # Longueur temporelle initiale
+  input_channels: 8                                                           # Uniquement les constantes physiologiques
+  stride: 2                                                                   # Facteur de compression par couche                 # [4] sur des séquences plus grandes
+  target_kld: 400                                                             # KLD cible pour l'entraînement du VAE              # Non utilisé actuellement
+  spectral_weight: 0.1                                                        # Poids de la perte spectrale                       # Non utilisé actuellement
+  enc_hidden_dims: [128, 256]                                                 # Couches de l'encoder                              # enc: [64, 128]
+  dec_hidden_dims: [256, 128, 64]                                             # Couches du decoder                                # dec: [128, 64, 32]
+  num_heads: 4                                                                # Têtes de l'AttentionBlock                         # [4, 8, 16]
+  num_groups: 8                                                               # Groupes pour GroupNorm                            # [4, 8, 16, 32]
+  dropout: 0.1                                                                # Dropout des ResBlocks                             # [0.1]
+  kernel_size_stride: 4                                                       # Kernel des strided convolutions                   # Possible d'appliquer [2] mais perte de fluidité grace au chevauchement du kernel
+  kernel_size_res: 3                                                          # Kernel des ResBlocks / tête                       # Possible d'appliquer [5] avec padding à [2] pour augmenter la fenetre de contexte
+  padding: 1                                                                  # Padding par défaut
+  logvar_clip_min: -30.0                                                      # Clamping KLD min
+  logvar_clip_max: 20.0                                                       # Clamping KLD max
+  scaler_path: "checkpoints/main_scaler.pkl"           # Persistance du QuantileTransformer
+  checkpoint_path: "checkpoints/vae_main.pth"
+  best_model_path: "checkpoints/vae_main_best.pth"
+
+# VAE de l'historique
+history_autoencoder:
+  latent_channel : 24                                                         # Dimension de l'espace compressé (Z)
+  seq_len: 32                                                                 # Longueur temporelle historique
+  input_channels: 8                                                           # 8 constantes
+  stride: 2                                                                   # Facteur de compression par couche                 # [4] sur des séquences plus grandes
+  target_kld: 400                                                             # KLD cible pour l'entraînement du VAE              # Non utilisé actuellement
+  spectral_weight: 0.1                                                        # Poids de la perte spectrale                       # Non utilisé actuellement
+  enc_hidden_dims: [128, 256]                                                 # Couches de l'encoder                              # enc: [64, 128]
+  dec_hidden_dims: [256, 128, 64]                                             # Couches du decoder                                # dec: [128, 64, 32]
+  num_heads: 4                                                                # Têtes de l'AttentionBlock                         # [4, 8, 16]
+  num_groups: 8                                                               # Groupes pour GroupNorm                            # [4, 8, 16, 32]
+  dropout: 0.1                                                                # Dropout des ResBlocks                             # [0.1]
+  kernel_size_stride: 4                                                       # Kernel des strided convolutions                   # Possible d'appliquer [2] mais perte de fluidité grace au chevauchement du kernel
+  kernel_size_res: 3                                                          # Kernel des ResBlocks / tête                       # Possible d'appliquer [5] avec padding à [2] pour augmenter la fenetre de contexte
+  padding: 1                                                                  # Padding par défaut pour le kernel_size_res
+  logvar_clip_min: -30.0                                                      # Clamping KLD min
+  logvar_clip_max: 20.0                                                       # Clamping KLD max
+  hist_scaler_path: "checkpoints/hist_scaler.pkl" # Persistance du QuantileTransformer
+  checkpoint_path: "checkpoints/vae_history.pth"
+  best_model_path: "checkpoints/vae_history_best.pth"
+
+diffusion:
+  embed_dim: 512                                                              # Dimension interne du Transformer                # [256, 8]/([embed_dim: 768, num_heads: 12] Peut-être plus tard)
+  num_heads: 16                                                               # Nombre de têtes d'attention
+  vae_stride: 4                                                               # Stride total du VAE (2 * 2) pour alignement VAE
+  num_layers: 6                                                               # Nombre de blocs Transformer                     # [4, 6, 8] Risque d'overfitting avec l'accroissement de cette valeur
+  ff_mult: 4                                                                  # Multiplicateur du FeedForward                   # Laisser à [4]
+  dropout: 0.1                                                                # Dropout interne                                 # [0.1]
+  cfg_scale: 2.5                                                              # Force du guidage                                # Pas de guidage à [1], excessif à [4]
+  cfg_dropout: 0.20                                                           # Dropout pour l'entraînement du CFG              # [0.10, 0.15, 0.20]
+  num_inference_steps: 15                                                     # Étapes d'inférence (DPM-Solver++)
+  num_samples: 5                                                              # Nombre d'inférence par patient
+  num_classes: 100                                                            # Nombre max de codes d'événements
+  null_class: 99                                                              # Classe utilisée pour le CFG (uncond)
+  latent_scale_path: "checkpoints/latent_scale.npy"
+  hist_latent_scale_path: "checkpoints/hist_latent_scale.npy"
+  checkpoint_path: "checkpoints/diffusion.pth"
+  best_model_path: "checkpoints/diffusion_best.pth"
+
+training:
+  batch_size: 128                                                             # Taille du batch                                 # [64, 128, 256]
+  lr_vae: 0.0001                                                              # Learning rate du VAE                            # [1e-5, 1e-4, 1e-3]
+  lr_diffusion: 0.0003                                                        # Learning rate du DiT                            # [1e-4, 3e-4, 5e-4]
+  epochs_vae: 30
+  epochs_diffusion: 50
+  device: "cuda"

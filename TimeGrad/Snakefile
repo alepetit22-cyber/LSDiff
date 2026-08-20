@@ -1,0 +1,58 @@
+# =============================================================================
+# 1. DÉFINITION SIMPLIFIÉE DES CONFIGURATIONS (L'essai par modification)
+# =============================================================================
+
+CONFIGS = {
+    # La Baseline (référence)
+    "baseline":     {"nl": 3, "nc": 160, "rc": 32, "bs": 128, "cce": 0.25},
+    
+    # Variations de Layers (num_layer)
+    "layers_3":     {"nl": 2, "nc": 160, "rc": 32, "bs": 128, "cce": 0.25},
+    "layers_4":     {"nl": 4, "nc": 160, "rc": 32, "bs": 128, "cce": 0.25},
+    
+    # Variations de Cells (num_cell)
+    "cells_80":     {"nl": 3, "nc": 80,  "rc": 32, "bs": 128, "cce": 0.25},
+    "cells_320":    {"nl": 3, "nc": 320, "rc": 32, "bs": 128, "cce": 0.25},
+    
+    # Variations de Channels (residual_channels)
+    "channels_16":  {"nl": 3, "nc": 160, "rc": 16, "bs": 128, "cce": 0.25},
+    "channels_64":  {"nl": 3, "nc": 160, "rc": 64, "bs": 128, "cce": 0.25},
+    
+    # Variations de Batch Size
+    "batch_64":     {"nl": 3, "nc": 160, "rc": 32, "bs": 64, "cce": 0.25},
+    "batch_256":    {"nl": 3, "nc": 160, "rc": 32, "bs": 256, "cce": 0.25},
+
+    # Variations de la cross entropy loss
+    "cce_015":      {"nl": 3, "nc": 160, "rc": 32, "bs": 128, "cce": 0.15},
+    "cce_035":      {"nl": 3, "nc": 160, "rc": 32, "bs": 128, "cce": 0.35},
+}
+
+# =============================================================================
+# 2. RÈGLES SNAKEMAKE
+# =============================================================================
+
+rule all:
+    input:
+        [
+            f"checkpoints_pred16_hist32_nl{c['nl']}_nc{c['nc']}_rc{c['rc']}_bs{c['bs']}_cce{c['cce']}/gen_data.npy"
+            for c in CONFIGS.values()
+        ]
+
+rule train_timegrad:
+    output:
+        real = "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/real_data.npy",
+        gen  = "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/gen_data.npy",
+        prediction = "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/prediction-net-state.pt"
+    log:
+        "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/training.log"
+    resources:
+        gpu=1
+    shell:
+        """
+        python -u timegrad_train_with_cat_final.py \
+            --num_layer {wildcards.nl} \
+            --num_cell {wildcards.nc} \
+            --residual_channels {wildcards.rc} \
+            --batch_size {wildcards.bs} \
+            --cce_weight {wildcards.cce} > {log} 2>&1
+        """

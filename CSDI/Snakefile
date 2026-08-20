@@ -1,0 +1,53 @@
+# =============================================================================
+# 1. DÉFINITION DES CONFIGURATIONS
+# =============================================================================
+
+CONFIGS = {
+    # La Baseline (référece)
+    "baseline":     {"nl": 4, "c": 128, "bs": 128, "cce": 0.15},
+    
+    # Variations de Layers (num_layer)
+    "layers_3":     {"nl": 3, "c": 128, "bs": 128, "cce": 0.15},
+    "layers_5":     {"nl": 5, "c": 128, "bs": 128, "cce": 0.15},
+    
+    # Variations de channels
+    "channels_64":  {"nl": 4, "c": 64,  "bs": 128, "cce": 0.15},
+    # "channels_256": {"nl": 4, "c": 256, "bs": 128, "cce": 0.15},
+    
+    # Variations de Batch Size
+    "batch_64":     {"nl": 4, "c": 128, "bs": 64, "cce": 0.15},
+    # "batch_256":    {"nl": 4, "c": 128, "bs": 256, "cce": 0.15},
+ 
+    # Variations de categorical cross entropy (cce)
+    "cce_01":       {"nl": 4, "c": 128, "bs": 128, "cce": 0.1},
+    "cce_02":       {"nl": 4, "c": 128, "bs": 128, "cce": 0.2}
+}
+
+# =============================================================================
+# 2. RÈGLES SNAKEMAKE
+# =============================================================================
+
+rule all:
+    input:
+        # Snakemake va lire le dictionnaire ligne par ligne et générer les chemins
+        [
+            f"checkpoints_pred16_hist32_nl{c['nl']}_c{c['c']}_bs{c['bs']}_cce{c['cce']}/gen_data.npy"
+            for c in CONFIGS.values()
+        ]
+
+rule train_timegrad:
+    output:
+        real = "checkpoints_pred16_hist32_nl{nl}_c{c}_bs{bs}_cce{cce}/real_data.npy",
+        gen  = "checkpoints_pred16_hist32_nl{nl}_c{c}_bs{bs}_cce{cce}/gen_data.npy"
+    log:
+        "checkpoints_pred16_hist32_nl{nl}_c{c}_bs{bs}_cce{cce}/training.log"
+    resources:
+        gpu=1
+    shell:
+        """
+        python -u csdi_train_with_cat_final.py \
+            --num_layer {wildcards.nl} \
+            --channels {wildcards.c} \
+            --batch_size {wildcards.bs} \
+            --cce_weight {wildcards.cce}  > {log} 2>&1
+        """
