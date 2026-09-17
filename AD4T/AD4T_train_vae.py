@@ -87,10 +87,6 @@ def parse_args():
     parser.add_argument('--factor', type=int, default=16, help='Factor of dimensionality expansion for VAE')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--cce_weight', type=float, default=0.1, help='CCE weight')
-    # DIT
-    parser.add_argument('--hidden_size', type=int, default=160, help='Latent dimension')
-    parser.add_argument('--depth', type=int, default=7, help='Depth of the DIT')
-    parser.add_argument('--num_head_DIT', type=int, default=8, help='Number of heads in the DIT')
 
 
 
@@ -106,7 +102,7 @@ window_len = history_len + prediction_len
 
 class Args:
     # VAE
-    vae_epochs = 3
+    vae_epochs = 5
     d_latent = 8
     window_len = window_len
     num_layer = arguments.num_layer
@@ -114,16 +110,6 @@ class Args:
     num_head = arguments.num_head_VAE
     factor = arguments.factor
     cce_weight = arguments.cce_weight
-    # DIT
-    dit_epochs = 3
-    num_rows = window_len
-    latent_size = 10
-    hidden_size = arguments.hidden_size
-    depth = arguments.depth
-    num_head_DIT = arguments.num_head_DIT
-    mlp_ratio = 4
-    # Inférence
-    num_samples = 10
     
 
 args = Args()
@@ -132,7 +118,7 @@ args = Args()
 # PARAMÉTRAGE DES DATASETS                         #
 ####################################################
 # Chargement des données
-chemin_fichier = '../Data/db_meta_2000_FR.json'
+chemin_fichier = '../Data/db_200.json'
 with open(chemin_fichier, 'r') as f:
     data = json.load(f)
 
@@ -374,6 +360,21 @@ print(f"Heure de fin de l'inférence : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"Format de real_data : {real_data.shape}  (Batch, Temporel, Constantes)")
 print(f"Format de gen_data  : {gen_data.shape}  (Batch, Temporel, Constantes)")
 print(f"Datasets sauvegardés avec succès dans : {path_dir}")
+
+#####################################################
+# ÉVALUATION DES DURÉES                             #
+#####################################################
+durée_train_vae = fin_train_vae - debut_train_vae
+durée_inf_vae = fin_inf_vae - debut_inf_vae
+
+m_train, s_train = divmod(durée_train_vae, 60)
+m_inf, s_inf = divmod(durée_inf_vae, 60)
+
+print("=" * 60)
+print("[Evaluation de la durée d'entrainement et d'inférence]")
+print(f"Temps d'entraînement : {int(m_train)} min {int(s_train)} s (Total: {durée_train_vae:.2f} secondes)")
+print(f"Temps d'inférence    : {int(m_inf)} min {int(s_inf)} s (Total: {durée_inf_vae:.2f} secondes)")
+print("=" * 60)
 
 #############################################
 # EVALUATION DES RÉSULTATS                  #

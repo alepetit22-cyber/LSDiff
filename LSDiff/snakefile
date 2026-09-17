@@ -1,215 +1,235 @@
+import copy
 import os
+from itertools import product
+
 import yaml
-import json
-from copy import deepcopy
 
-# Chargement du config de base
-with open("config.yaml", "r") as f:
-    base_config = yaml.safe_load(f)
+# =============================================================================
+# GRILLES
+# =============================================================================
 
-# ----------------------------------------------------------------------
-# Définition des expériences (une par paramètre varié)
-# ----------------------------------------------------------------------
-experiments = []
+GRID_VAE = {
+    "lc":    [12, 24],            # latent_channel
+    "cce":   [0.05, 0.15, 0.25],  # cce_weight 
+    "vae_d": [0.1, 0.2],          # dropout VAE
+}
 
-# Variations pour les VAEs (modifient à la fois autoencoder et history_autoencoder)
-vae_variations = [
-    # Paramètres couplés (enc_hidden_dims ET dec_hidden_dims)
-    {"params": [("autoencoder", "enc_hidden_dims", [64, 128]), 
-                ("autoencoder", "dec_hidden_dims", [128, 64, 32])], 
-     "name": "vae_enc64_dec128"},
-    
-    # Paramètres simples (un seul)
-    {"params": ("autoencoder", "num_heads", 8), "name": "vae_nh_8"},
-    {"params": ("autoencoder", "num_heads", 16), "name": "vae_nh_16"},
-    {"params": ("autoencoder", "num_groups", 4), "name": "vae_ng_4"},
-    {"params": ("autoencoder", "num_groups", 16), "name": "vae_ng_16"},
-    {"params": ("autoencoder", "num_groups", 32), "name": "vae_ng_32"},
-    {"params": ("training", "lr_vae", 1e-5), "name": "vae_lr_1e-5"},
-    {"params": ("training", "lr_vae", 1e-3), "name": "vae_lr_1e-3"},
-]
+GRID_DIT = {
+    "nh":    [8, 16, 32],         # num_heads DiT 
+    "nl":    [8],             # num_layers DiT
+    "dit_d": [0.1, 0.2],          # dropout DiT
+    "cfg":   [0.5, 1.5],          # cfg_scale 
+}
 
-# Variations pour la Diffusion
-diff_variations = [
-    {"params": ("diffusion", "embed_dim", 256), "name": "diff_embed_256"},
-    {"params": ("diffusion", "embed_dim", 768), "name": "diff_embed_768"},
-    {"params": ("diffusion", "num_heads", 8), "name": "diff_nh_8"},
-    {"params": ("diffusion", "num_heads", 12), "name": "diff_nh_12"},
-    {"params": ("diffusion", "num_layers", 4), "name": "diff_layers_4"},
-    {"params": ("diffusion", "num_layers", 8), "name": "diff_layers_8"},
-    {"params": ("diffusion", "cfg_dropout", 0.10), "name": "diff_cfgdrop_0.10"},
-    {"params": ("diffusion", "cfg_dropout", 0.15), "name": "diff_cfgdrop_0.15"},
-    {"params": ("diffusion", "cfg_scale", 1.0), "name": "diff_cfgscale_1.0"},
-    {"params": ("diffusion", "cfg_scale", 4.0), "name": "diff_cfgscale_4.0"},
-    {"params": ("training", "lr_diffusion", 1e-4), "name": "diff_lr_1e-4"},
-    {"params": ("training", "lr_diffusion", 5e-4), "name": "diff_lr_5e-4"},
-]
+VAE_CONFIGS = [dict(zip(GRID_VAE.keys(), v)) for v in product(*GRID_VAE.values())]
+DIT_CONFIGS = [dict(zip(GRID_DIT.keys(), v)) for v in product(*GRID_DIT.values())]
 
-experiments.extend(vae_variations)
-experiments.extend(diff_variations)
+# =============================================================================
+# IDs
+# =============================================================================
 
-# Baseline
-experiments.append({"params": None, "name": "baseline"})
+def make_vae_id(cfg):
+    return f"vae_lc{cfg['lc']}_cce{cfg['cce']}_d{cfg['vae_d']}"
 
-exp_mods = {}
-for e in experiments:
-    exp_mods[e["name"]] = e["params"]
+def make_dit_id(cfg, vae_id):
+    return (
+        f"dit_nh{cfg['nh']}_nl{cfg['nl']}"
+        f"_d{cfg['dit_d']}_cfg{cfg['cfg']}__{vae_id}"
+    )
 
-def extract_params(exp):
-    """Extrait une liste de (chemin, clé, valeur) depuis un objet expérience."""
-    params = exp["params"]
-    if params is None:
-        return []
-    
-    # Si c'est un tuple de 3 éléments, c'est un paramètre simple
-    if isinstance(params, tuple) and len(params) == 3:
-        path, key, value = params
-        # S'assurer que path est un tuple
-        if isinstance(path, str):
-            path = (path,)
-        return [(path, key, value)]
-    
-    # Si c'est une liste, c'est un ou plusieurs paramètres
-    elif isinstance(params, list):
-        result = []
-        for item in params:
-            if isinstance(item, tuple) and len(item) == 3:
-                path, key, value = item
-                # S'assurer que path est un tuple
-                if isinstance(path, str):
-                    path = (path,)
-                result.append((path, key, value))
-            else:
-                raise ValueError(f"Format invalide dans la liste : {item}")
-        return result
-    
-    else:
-        raise ValueError(f"Format de params invalide : {params}")
+# --- Maps pour lookup dans les règles ---
+VAE_MAP = {make_vae_id(c): c for c in VAE_CONFIGS}
 
-def generate_config(exp_name, output_path):
-    # Récupérer l'expérience
-    exp = next(e for e in experiments if e["name"] == exp_name)
-    mods = extract_params(exp)
-    
-    new_config = deepcopy(base_config)
-    
-    # Appliquer chaque modification
-    for mod_path, mod_key, mod_value in mods:
-        # mod_path est un tuple de clés (ex: ("autoencoder", "enc_hidden_dims"))
-        target = new_config
-        for key in mod_path:
-            target = target[key]
-        target[mod_key] = mod_value
-        
-        # Si la modification porte sur autoencoder, on applique aussi à history_autoencoder
-        if mod_path[0] == "autoencoder":
-            hist_target = new_config["history_autoencoder"]
-            for key in mod_path[1:]:
-                hist_target = hist_target[key]
-            hist_target[mod_key] = mod_value
+DIT_MAP = {
+    make_dit_id(d, make_vae_id(v)): {**d, **v}
+    for d in DIT_CONFIGS
+    for v in VAE_CONFIGS
+}
 
-    # Redéfinir tous les chemins pour qu'ils pointent dans le dossier de l'expérience
-    exp_dir = f"results/{exp_name}"
-    checkpoints_dir = f"{exp_dir}/checkpoints"
+# =============================================================================
+# CHEMINS
+# =============================================================================
 
-    # VAE principal
-    new_config["autoencoder"]["scaler_path"] = f"{checkpoints_dir}/main_scaler.pkl"
-    new_config["autoencoder"]["checkpoint_path"] = f"{checkpoints_dir}/vae_main.pth"
-    new_config["autoencoder"]["best_model_path"] = f"{checkpoints_dir}/vae_main_best.pth"
+VAE_DIR_TMPL = "runs/{run_id}"
+DIT_DIR_TMPL = "runs/{run_id}"
 
-    # HistVAE
-    new_config["history_autoencoder"]["hist_scaler_path"] = f"{checkpoints_dir}/hist_scaler.pkl"
-    new_config["history_autoencoder"]["checkpoint_path"] = f"{checkpoints_dir}/vae_history.pth"
-    new_config["history_autoencoder"]["best_model_path"] = f"{checkpoints_dir}/vae_history_best.pth"
+def vae_dir(vae_id):  return VAE_DIR_TMPL.format(run_id=vae_id)
+def dit_dir(dit_id):  return DIT_DIR_TMPL.format(run_id=dit_id)
 
-    # Diffusion
-    new_config["diffusion"]["latent_scale_path"] = f"{checkpoints_dir}/latent_scale.npy"
-    new_config["diffusion"]["hist_latent_scale_path"] = f"{checkpoints_dir}/hist_latent_scale.npy"
-    new_config["diffusion"]["checkpoint_path"] = f"{checkpoints_dir}/diffusion.pth"
-    new_config["diffusion"]["best_model_path"] = f"{checkpoints_dir}/diffusion_best.pth"
+def _vae_of(dit_id):
+    """Extrait l'id VAE depuis l'id DiT (suffixe après '__')."""
+    return dit_id.split("__", 1)[1]
 
-    # Écrire le fichier
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, "w") as f:
-        yaml.dump(new_config, f, default_flow_style=False)
 
-# ----------------------------------------------------------------------
-# Règles Snakemake
-# ----------------------------------------------------------------------
+# =============================================================================
+# RÈGLE GLOBALE
+# =============================================================================
+
 rule all:
     input:
-        expand("results/{exp}/done.txt", exp=exp_mods.keys())
+        expand(
+            "runs/{dit_id}/gen_data_dit.npy",
+            dit_id=list(DIT_MAP.keys()),
+        ),
 
-# Génération du fichier config pour chaque expérience
-rule generate_config:
+
+# =============================================================================
+# VAE (main + history)
+# =============================================================================
+
+rule vae_train:
     output:
-        config_file = "results/{exp}/config.yaml"
+        main_ckpt         = "runs/{vae_id}/vae_main_best.pth",
+        history_ckpt      = "runs/{vae_id}/vae_history_best.pth",
+        main_scaler       = "runs/{vae_id}/main_scaler.pkl",
+        hist_scaler       = "runs/{vae_id}/hist_scaler.pkl",
+        real_data_main    = "runs/{vae_id}/real_data_main.npy",
+        gen_data_main     = "runs/{vae_id}/gen_data_main.npy",
+        real_data_history = "runs/{vae_id}/real_data_history.npy",
+        gen_data_history  = "runs/{vae_id}/gen_data_history.npy",
+        main_vocab        = "runs/{vae_id}/main_vocab.json",
+        hist_vocab        = "runs/{vae_id}/hist_vocab.json",
+        main_cat_vocab    = "runs/{vae_id}/main_cat_vocab.json",
+        hist_cat_vocab    = "runs/{vae_id}/hist_cat_vocab.json",
+        config_yaml       = "runs/{vae_id}/config.yaml",
+    log:
+        "runs/{vae_id}/training.log",
+    params:
+        lc     = lambda w: VAE_MAP[w.vae_id]["lc"],
+        cce    = lambda w: VAE_MAP[w.vae_id]["cce"],
+        vae_d  = lambda w: VAE_MAP[w.vae_id]["vae_d"],
+        outdir = lambda w: vae_dir(w.vae_id),
     run:
-        generate_config(wildcards.exp, output.config_file)
+        from config import config as base_config
 
-# Entraînement du VAE principal
-rule train_vae_main:
+        cfg = copy.deepcopy(base_config.model_dump())
+        outdir = params.outdir
+        os.makedirs(outdir, exist_ok=True)
+
+        # VAE principal
+        ae = cfg["autoencoder"]
+        ae["latent_channel"]   = params.lc
+        ae["cce_weight"]       = params.cce
+        ae["dropout"]          = params.vae_d
+        ae["checkpoint_path"]  = f"{outdir}/vae_main.pth"
+        ae["best_model_path"]  = output.main_ckpt
+        ae["scaler_path"]      = output.main_scaler
+
+        # VAE historique
+        hae = cfg["history_autoencoder"]
+        hae["latent_channel"]   = params.lc
+        hae["cce_weight"]       = params.cce
+        hae["dropout"]          = params.vae_d
+        hae["checkpoint_path"]  = f"{outdir}/vae_history.pth"
+        hae["best_model_path"]  = output.history_ckpt
+        hae["hist_scaler_path"] = output.hist_scaler
+
+        # Inférence
+        inf = cfg["inference"]
+        inf["vae_real_path"]       = f"{outdir}/real_data"
+        inf["vae_gen_path"]        = f"{outdir}/gen_data"
+        inf["vae_evaluator_path"]  = f"{outdir}/"
+
+        # Écriture du YAML spécifique au run
+        with open(output.config_yaml, "w") as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
+
+        # Entraînements séquentiels
+        shell(r"""
+            set -e
+            echo "=== VAE MAIN ===" >> {log}
+            python -u train_VAE.py --mode main \
+                --config {output.config_yaml} >> {log} 2>&1
+
+            echo "=== VAE HISTORY ===" >> {log}
+            python -u train_VAE.py --mode history \
+                --config {output.config_yaml} >> {log} 2>&1
+
+            echo "=== VAE terminés ===" >> {log}
+        """)
+
+
+# =============================================================================
+# ÉTAPE 2 — DiT, 1 run par config DiT, réutilise le VAE parent
+# =============================================================================
+
+rule dit_train:
     input:
-        config = "results/{exp}/config.yaml"
+        main_ckpt         = lambda w: f"runs/{_vae_of(w.dit_id)}/vae_main_best.pth",
+        history_ckpt      = lambda w: f"runs/{_vae_of(w.dit_id)}/vae_history_best.pth",
+        main_scaler       = lambda w: f"runs/{_vae_of(w.dit_id)}/main_scaler.pkl",
+        hist_scaler       = lambda w: f"runs/{_vae_of(w.dit_id)}/hist_scaler.pkl",
     output:
-        best_model = "results/{exp}/checkpoints/vae_main_best.pth",
-        checkpoint = "results/{exp}/checkpoints/vae_main.pth",
-        scaler = "results/{exp}/checkpoints/main_scaler.pkl",
-        evaluation = "results/{exp}/checkpoints/main/evaluation.txt",
-        population_distribution = "results/{exp}/checkpoints/main/population_distribution.png"
+        latent_scale      = "runs/{dit_id}/latent_scale.npy",
+        hist_latent_scale = "runs/{dit_id}/hist_latent_scale.npy",
+        gen               = "runs/{dit_id}/gen_data_dit.npy",
+        real              = "runs/{dit_id}/real_data_dit.npy",
+        ckpt              = "runs/{dit_id}/diffusion_best.pth",
+        config_yaml       = "runs/{dit_id}/config.yaml",
     log:
-        "results/{exp}/logs/train_vae_main.log"
-    shell:
-        """
-        python train_VAE.py --mode main --config {input.config} > {log} 2>&1
-        """
-
-# Entraînement du HistVAE
-rule train_vae_history:
-    input:
-        config = "results/{exp}/config.yaml"
-    output:
-        best_model = "results/{exp}/checkpoints/vae_history_best.pth",
-        checkpoint = "results/{exp}/checkpoints/vae_history.pth",
-        scaler = "results/{exp}/checkpoints/hist_scaler.pkl",
-        evaluation = "results/{exp}/checkpoints/history/evaluation.txt",
-        population_distribution = "results/{exp}/checkpoints/history/population_distribution.png"
-    log:
-        "results/{exp}/logs/train_vae_history.log"
-    shell:
-        """
-        python train_VAE.py --mode history --config {input.config} > {log} 2>&1
-        """
-
-# Entraînement de la diffusion (dépend des deux VAE)
-rule train_diffusion:
-    input:
-        config = "results/{exp}/config.yaml",
-        vae_main = "results/{exp}/checkpoints/vae_main_best.pth",
-        vae_history = "results/{exp}/checkpoints/vae_history_best.pth"
-    output:
-        best_model = "results/{exp}/checkpoints/diffusion_best.pth",
-        checkpoint = "results/{exp}/checkpoints/diffusion.pth",
-        latent_scale = "results/{exp}/checkpoints/latent_scale.npy",
-        hist_latent_scale = "results/{exp}/checkpoints/hist_latent_scale.npy",
-        gen_data = "results/{exp}/checkpoints/gen_data_diffusion.npy",
-        real_data = "results/{exp}/checkpoints/real_data_diffusion.npy",
-        eval_txt = "results/{exp}/checkpoints/diffusion/evaluation.txt",
-        dist_plot = "results/{exp}/checkpoints/diffusion/population_distribution.png"
-    log:
-        "results/{exp}/logs/train_diffusion.log"
-    shell:
-        """
-        python train_DiT.py --config {input.config} > {log} 2>&1
-        """
-
-# Fichier de marqueur de fin pour chaque expérience
-rule done:
-    input:
-        # On attend que tous les outputs de diffusion soient produits
-        train_diffusion_outputs = rules.train_diffusion.output
-    output:
-        done = "results/{exp}/done.txt"
+        "runs/{dit_id}/training.log",
+    params:
+        nh     = lambda w: DIT_MAP[w.dit_id]["nh"],
+        nl     = lambda w: DIT_MAP[w.dit_id]["nl"],
+        dit_d  = lambda w: DIT_MAP[w.dit_id]["dit_d"],
+        cfg    = lambda w: DIT_MAP[w.dit_id]["cfg"],
+        vae_id = lambda w: _vae_of(w.dit_id),
+        outdir = lambda w: dit_dir(w.dit_id),
     run:
-        with open(output.done, "w") as f:
-            f.write("Done")
+        from config import config as base_config
+
+        vae_cfg = VAE_MAP[params.vae_id]
+        cfg = copy.deepcopy(base_config.model_dump())
+        outdir = params.outdir
+        os.makedirs(outdir, exist_ok=True)
+        
+        # Configuration des VAE
+        cfg["autoencoder"]["latent_channel"]   = vae_cfg["lc"]
+        cfg["autoencoder"]["cce_weight"]       = vae_cfg["cce"]
+        cfg["autoencoder"]["dropout"]          = vae_cfg["vae_d"]
+
+        cfg["history_autoencoder"]["latent_channel"] = vae_cfg["lc"]
+        cfg["history_autoencoder"]["cce_weight"]     = vae_cfg["cce"]
+        cfg["history_autoencoder"]["dropout"]        = vae_cfg["vae_d"]
+
+        # Fichiers VAE (input)
+        cfg["autoencoder"]["best_model_path"]          = input.main_ckpt
+        cfg["autoencoder"]["scaler_path"]              = input.main_scaler
+        cfg["history_autoencoder"]["best_model_path"]  = input.history_ckpt
+        cfg["history_autoencoder"]["hist_scaler_path"] = input.hist_scaler
+
+        # Paramètres DiT à varier
+        dif = cfg["diffusion"]
+        dif["num_heads"]  = params.nh
+        dif["num_layers"] = params.nl
+        dif["dropout"]    = params.dit_d
+        dif["cfg_scale"]  = params.cfg
+
+        # Fichiers VAE
+        cfg["autoencoder"]["best_model_path"]          = input.main_ckpt
+        cfg["autoencoder"]["scaler_path"]              = input.main_scaler
+        cfg["history_autoencoder"]["best_model_path"]  = input.history_ckpt
+        cfg["history_autoencoder"]["hist_scaler_path"] = input.hist_scaler
+
+        dif["latent_scale_path"]      = output.latent_scale
+        dif["hist_latent_scale_path"] = output.hist_latent_scale
+
+        # Sorties DiT
+        dif["checkpoint_path"] = f"{outdir}/diffusion.pth"
+        dif["best_model_path"] = output.ckpt
+
+        # Section inference pour train_DiT.py
+        inf = cfg["inference"]
+        inf["dit_real_path"]      = f"{outdir}/real_data_dit"
+        inf["dit_gen_path"]       = f"{outdir}/gen_data_dit"
+        inf["dit_evaluator_path"] = f"{outdir}/"
+
+        # Écriture du YAML spécifique au run
+        with open(output.config_yaml, "w") as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
+
+        # Entraînement
+        shell(r"""
+            set -e
+            python -u train_DiT.py --config {output.config_yaml} > {log} 2>&1
+        """)

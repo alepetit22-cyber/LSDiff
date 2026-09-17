@@ -1,53 +1,54 @@
-# =============================================================================
-# 1. DÉFINITION DES CONFIGURATIONS
-# =============================================================================
+from itertools import product
+from snakemake.utils import format
 
-CONFIGS = {
-    # La Baseline (référece)
-    "baseline":     {"nl": 4, "c": 128, "bs": 128, "cce": 0.15},
-    
-    # Variations de Layers (num_layer)
-    "layers_3":     {"nl": 3, "c": 128, "bs": 128, "cce": 0.15},
-    "layers_5":     {"nl": 5, "c": 128, "bs": 128, "cce": 0.15},
-    
-    # Variations de channels
-    "channels_64":  {"nl": 4, "c": 64,  "bs": 128, "cce": 0.15},
-    # "channels_256": {"nl": 4, "c": 256, "bs": 128, "cce": 0.15},
-    
-    # Variations de Batch Size
-    "batch_64":     {"nl": 4, "c": 128, "bs": 64, "cce": 0.15},
-    # "batch_256":    {"nl": 4, "c": 128, "bs": 256, "cce": 0.15},
- 
-    # Variations de categorical cross entropy (cce)
-    "cce_01":       {"nl": 4, "c": 128, "bs": 128, "cce": 0.1},
-    "cce_02":       {"nl": 4, "c": 128, "bs": 128, "cce": 0.2}
+GRID = {
+    "nl":  [4, 5],
+    "c":   [64, 128], 
+    "nh":  [16, 32],
+    "bs":  [64, 128], 
+    "ded": [64, 128, 256],
+    "cce": [0.05, 0.15, 0.25],
 }
 
-# =============================================================================
-# 2. RÈGLES SNAKEMAKE
-# =============================================================================
+def make_id(cfg):
+    return (f"nl{cfg['nl']}_c{cfg['c']}_nh{cfg['nh']}_bs{cfg['bs']}_ded{cfg['ded']}_cce{cfg['cce']}")
+
+CONFIGS    = [dict(zip(GRID.keys(), v)) for v in product(*GRID.values())]
+CONFIG_MAP = {make_id(c): c for c in CONFIGS}
+
+CKPT_DIR = "checkpoints_pred16_hist32_{run_id}"
+
+def ckpt(cfg, filename):
+    return f"{CKPT_DIR.format(run_id=make_id(cfg))}/{filename}"
 
 rule all:
     input:
-        # Snakemake va lire le dictionnaire ligne par ligne et générer les chemins
-        [
-            f"checkpoints_pred16_hist32_nl{c['nl']}_c{c['c']}_bs{c['bs']}_cce{c['cce']}/gen_data.npy"
-            for c in CONFIGS.values()
-        ]
+        [ckpt(c, "gen_data.npy") for c in CONFIGS]
 
-rule train_timegrad:
+rule train_csdi:
     output:
-        real = "checkpoints_pred16_hist32_nl{nl}_c{c}_bs{bs}_cce{cce}/real_data.npy",
-        gen  = "checkpoints_pred16_hist32_nl{nl}_c{c}_bs{bs}_cce{cce}/gen_data.npy"
+        real       = CKPT_DIR.format(run_id="{run_id}") + "/real_data.npy",
+        gen        = CKPT_DIR.format(run_id="{run_id}") + "/gen_data.npy",
+        prediction = CKPT_DIR.format(run_id="{run_id}") + "/best_model.pt",
     log:
-        "checkpoints_pred16_hist32_nl{nl}_c{c}_bs{bs}_cce{cce}/training.log"
-    resources:
-        gpu=1
+        CKPT_DIR.format(run_id="{run_id}") + "/training.log",
+    params:
+        nl  = lambda w: CONFIG_MAP[w.run_id]["nl"],
+        c   = lambda w: CONFIG_MAP[w.run_id]["c"],
+        nh  = lambda w: CONFIG_MAP[w.run_id]["nh"],
+        bs  = lambda w: CONFIG_MAP[w.run_id]["bs"],
+        ded = lambda w: CONFIG_MAP[w.run_id]["ded"],
+        cce = lambda w: CONFIG_MAP[w.run_id]["cce"],
     shell:
         """
+        mkdir -p checkpoints_pred16_hist32_{wildcards.run_id}
         python -u csdi_train_with_cat_final.py \
-            --num_layer {wildcards.nl} \
-            --channels {wildcards.c} \
-            --batch_size {wildcards.bs} \
-            --cce_weight {wildcards.cce}  > {log} 2>&1
+            --num_layer {params.nl} \
+            --num_heads {params.nh} \
+            --channels {params.c} \
+            --num_head {params.nh} \
+            --batch_size {params.bs} \
+            --diffusion_embedding_dim {params.ded} \
+            --cce_weight {params.cce} \
+            > {log} 2>&1
         """

@@ -52,7 +52,10 @@ def main():
     num_cpu = multiprocessing.cpu_count()
     device = torch.device(config.training.device if torch.cuda.is_available() else "cpu")
 
-    checkpoint_dir = os.path.dirname(config.autoencoder.scaler_path)  # ex: "results/vae_nh_8/checkpoints"
+    if args.mode == "main":
+        checkpoint_dir = os.path.dirname(config.autoencoder.scaler_path)
+    else:
+        checkpoint_dir = os.path.dirname(config.history_autoencoder.hist_scaler_path)
     exp_dir = os.path.dirname(checkpoint_dir)
 
     ###################################################
@@ -195,9 +198,9 @@ def main():
 
     # Loss
     loss_function = HybridVAELoss(
-        spectral_weight=vae_config.spectral_weight,
-        cce_weight=0.1,
-        kld_weight=0.1
+        spectral_weight=0,
+        kld_weight=0, # 0.00025,
+        cce_weight=vae_config.cce_weight,
     )
 
     logger.info(f"Nombre de séquences d'entraînement : {len(train_dataset)}")
@@ -229,7 +232,7 @@ def main():
 
             recon_float, recon_cat_logits, mu, logvar = model(inputs_float, inputs_cat)
             
-            _ , mse, cce, kld, spec = loss_function(
+            total_loss , mse, cce, kld, spec = loss_function(
                 mu,
                 logvar,
                 recon_float,
@@ -238,7 +241,7 @@ def main():
                 target_cat=inputs_cat if config.dataset.cat_mode == "embedded" else None
             )
             
-            loss = mse
+            loss = total_loss
             (loss).backward()
             
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -285,14 +288,13 @@ def main():
         if epoch % 10 == 0 or epoch == 1:
             logger.info(f"Epoch {epoch:04d} "
                   f"| MSE: {train_metrics['mse']:.4f}/{val_metrics['mse']:.4f} " 
-                  f"| CCE: {train_metrics['cce']:.0f}/{val_metrics['cce']:.0f} "
+                  f"| CCE: {train_metrics['cce']:.4f}/{val_metrics['cce']:.4f} "
                   f"| KLD: {train_metrics['kld']:.0f}/{val_metrics['kld']:.0f} "
                   f"| SPEC: {train_metrics['spec']:.4f}/{val_metrics['spec']:.6f} ")
 
         # Sauvegarde
         if val_metrics["mse"] < best_val_mse:
             best_val_mse = val_metrics["mse"]
-            os.makedirs("checkpoints", exist_ok=True)
             torch.save(model.state_dict(), vae_config.best_model_path)
             logger.info(f"Nouveau meilleur modèle sauvegardé avec Val MSE: {best_val_mse:.6f}")
             
@@ -365,10 +367,9 @@ def main():
     # Arrondi des événements
     gen_data[:,:,7] = np.round(gen_data[:, :, 7])
 
-    os.makedirs(f"{exp_dir}/checkpoints", exist_ok=True)
-    real_path = f"{exp_dir}/checkpoints/real_data_{args.mode}.npy"
-    gen_path = f"{exp_dir}/checkpoints/gen_data_{args.mode}.npy"
-
+    real_path = f"{config.inference.vae_real_path}_{args.mode}.npy"
+    gen_path = f"{config.inference.vae_gen_path}_{args.mode}.npy"
+   
     np.save(real_path, real_data)
     np.save(gen_path, gen_data)
 
@@ -399,7 +400,7 @@ def main():
         real_data, 
         gen_data,
         col_names=["FC", "PAS", "PAM", "PAD", "Temp", "SpO2", "FR", "event_code"],
-        path_dir=f"{exp_dir}/checkpoints/{args.mode}/"
+        path_dir=f"{config.inference.vae_evaluator_path}{args.mode}/"
     )
 
     evaluator.run_full_analysis()

@@ -184,7 +184,7 @@ def get_dataloaders(json_path, pred_length=16, history_length=32, batch_size=128
     test_sampler = RandomSampler(
         test_dataset, 
         replacement=True, 
-        num_samples=int(samples_per_epoch/8),
+        num_samples=int(samples_per_epoch/25),
         generator=g
     )
 
@@ -329,7 +329,6 @@ def inference(model, test_loader, scaler_cont, device, path="checkpoints"):
             cond_mask = obs_mask_1d.unsqueeze(1).expand(-1, model.target_dim, -1)
             side_info = model.get_side_info(batch["tp"].to(device), cond_mask, meta_total)
 
-            # L'ancien code utilisait le bruit (current_sample) comme historique au lieu des vraies données.
             cat_emb_real = model.event_embedding(cat_data).permute(0, 2, 1) # Vraies données embedding
             true_x_target = torch.cat([cont_data, cat_emb_real], dim=1) # (B, Target_dim, L)
             

@@ -1,58 +1,57 @@
-# =============================================================================
-# 1. DÉFINITION SIMPLIFIÉE DES CONFIGURATIONS (L'essai par modification)
-# =============================================================================
+from itertools import product
+from snakemake.utils import format
 
-CONFIGS = {
-    # La Baseline (référence)
-    "baseline":     {"nl": 3, "nc": 160, "rc": 32, "bs": 128, "cce": 0.25},
-    
-    # Variations de Layers (num_layer)
-    "layers_3":     {"nl": 2, "nc": 160, "rc": 32, "bs": 128, "cce": 0.25},
-    "layers_4":     {"nl": 4, "nc": 160, "rc": 32, "bs": 128, "cce": 0.25},
-    
-    # Variations de Cells (num_cell)
-    "cells_80":     {"nl": 3, "nc": 80,  "rc": 32, "bs": 128, "cce": 0.25},
-    "cells_320":    {"nl": 3, "nc": 320, "rc": 32, "bs": 128, "cce": 0.25},
-    
-    # Variations de Channels (residual_channels)
-    "channels_16":  {"nl": 3, "nc": 160, "rc": 16, "bs": 128, "cce": 0.25},
-    "channels_64":  {"nl": 3, "nc": 160, "rc": 64, "bs": 128, "cce": 0.25},
-    
-    # Variations de Batch Size
-    "batch_64":     {"nl": 3, "nc": 160, "rc": 32, "bs": 64, "cce": 0.25},
-    "batch_256":    {"nl": 3, "nc": 160, "rc": 32, "bs": 256, "cce": 0.25},
-
-    # Variations de la cross entropy loss
-    "cce_015":      {"nl": 3, "nc": 160, "rc": 32, "bs": 128, "cce": 0.15},
-    "cce_035":      {"nl": 3, "nc": 160, "rc": 32, "bs": 128, "cce": 0.35},
+GRID = {
+    "nl":  [2, 3], 
+    "nc":  [160],
+    "rc":  [32, 64], 
+    "rl":  [2, 4, 6],
+    "bs":  [256, 512],
+    "d":   [0.1, 0.2],
+    "cce": [0.15, 0.05, 0.25], 
 }
 
-# =============================================================================
-# 2. RÈGLES SNAKEMAKE
-# =============================================================================
+def make_id(cfg):
+    return (f"nl{cfg['nl']}_nc{cfg['nc']}_rc{cfg['rc']}_rl{cfg['rl']}"
+            f"_bs{cfg['bs']}_d{cfg['d']}_cce{cfg['cce']}")
+
+CONFIGS    = [dict(zip(GRID.keys(), v)) for v in product(*GRID.values())]
+CONFIG_MAP = {make_id(c): c for c in CONFIGS}
+
+CKPT_DIR = "checkpoints_pred16_hist32_{run_id}"
+
+def ckpt(cfg, filename):
+    return f"{CKPT_DIR.format(run_id=make_id(cfg))}/{filename}"
 
 rule all:
     input:
-        [
-            f"checkpoints_pred16_hist32_nl{c['nl']}_nc{c['nc']}_rc{c['rc']}_bs{c['bs']}_cce{c['cce']}/gen_data.npy"
-            for c in CONFIGS.values()
-        ]
+        [ckpt(c, "gen_data.npy") for c in CONFIGS]
 
 rule train_timegrad:
     output:
-        real = "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/real_data.npy",
-        gen  = "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/gen_data.npy",
-        prediction = "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/prediction-net-state.pt"
+        real       = CKPT_DIR.format(run_id="{run_id}") + "/real_data.npy",
+        gen        = CKPT_DIR.format(run_id="{run_id}") + "/gen_data.npy",
+        prediction = CKPT_DIR.format(run_id="{run_id}") + "/prediction-net-state.pt",
     log:
-        "checkpoints_pred16_hist32_nl{nl}_nc{nc}_rc{rc}_bs{bs}_cce{cce}/training.log"
-    resources:
-        gpu=1
+        CKPT_DIR.format(run_id="{run_id}") + "/training.log",
+    params:
+        nl  = lambda w: CONFIG_MAP[w.run_id]["nl"],
+        nc  = lambda w: CONFIG_MAP[w.run_id]["nc"],
+        rc  = lambda w: CONFIG_MAP[w.run_id]["rc"],
+        rl  = lambda w: CONFIG_MAP[w.run_id]["rl"],
+        bs  = lambda w: CONFIG_MAP[w.run_id]["bs"],
+        d   = lambda w: CONFIG_MAP[w.run_id]["d"],
+        cce = lambda w: CONFIG_MAP[w.run_id]["cce"],
     shell:
         """
+        mkdir -p checkpoints_pred16_hist32_{wildcards.run_id}
         python -u timegrad_train_with_cat_final.py \
-            --num_layer {wildcards.nl} \
-            --num_cell {wildcards.nc} \
-            --residual_channels {wildcards.rc} \
-            --batch_size {wildcards.bs} \
-            --cce_weight {wildcards.cce} > {log} 2>&1
+            --num_layer         {params.nl} \
+            --num_cell          {params.nc} \
+            --residual_channels {params.rc} \
+            --residual_layers   {params.rl} \
+            --batch_size        {params.bs} \
+            --dropout           {params.d} \
+            --cce_weight        {params.cce} \
+            > {log} 2>&1
         """

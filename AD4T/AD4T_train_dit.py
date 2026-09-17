@@ -22,8 +22,8 @@ from async_lib import AsyncMatrix
 from train_vae.model import Model_VAE
 from torch.utils.data import Dataset, DataLoader
 
-sys.path.append("../")
-from Data.metrics import DatasetEvaluator 
+sys.path.append("../../")
+from metrics2 import DatasetEvaluator 
 from Data.utils import create_windows, analyser_evenements_dataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -86,6 +86,7 @@ def parse_args():
     parser.add_argument('--num_head_VAE', type=int, default=4, help='Number of heads in the VAE')
     parser.add_argument('--factor', type=int, default=16, help='Factor of dimensionality expansion for VAE')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--dropout', type=float, default=0.2, help='Dropout')
     parser.add_argument('--cce_weight', type=float, default=0.1, help='CCE weight')
     # DIT
     parser.add_argument('--hidden_size', type=int, default=160, help='Latent dimension')
@@ -106,16 +107,17 @@ window_len = history_len + prediction_len
 
 class Args:
     # VAE
-    vae_epochs = 3
+    vae_epochs = 20
     d_latent = 8
     window_len = window_len
     num_layer = arguments.num_layer
     batch_size = arguments.batch_size
     num_head = arguments.num_head_VAE
     factor = arguments.factor
+    dropout=arguments.dropout
     cce_weight = arguments.cce_weight
     # DIT
-    dit_epochs = 3
+    dit_epochs = 80
     num_rows = window_len
     latent_size = 10
     hidden_size = arguments.hidden_size
@@ -123,7 +125,7 @@ class Args:
     num_head_DIT = arguments.num_head_DIT
     mlp_ratio = 4
     # Inférence
-    num_samples = 10
+    num_samples = 5
     
 
 args = Args()
@@ -132,7 +134,7 @@ args = Args()
 # PARAMÉTRAGE DES DATASETS                         #
 ####################################################
 # Chargement des données
-chemin_fichier = '../Data/db_meta_2000_FR.json'
+chemin_fichier = '../Data/db_200.json'
 with open(chemin_fichier, 'r') as f:
     data = json.load(f)
 
@@ -147,7 +149,7 @@ data_val = data[train_end:val_end]
 data_test = data[val_end:]
 
 # Configuration du dossier de sortie
-path_dir = f"checkpoints_pred16_hist32_VAE_nl{args.num_layer}_nh{args.num_head}_f{args.factor}_bs{args.batch_size}_cce{args.cce_weight}_DIT_hd{args.hidden_size}_d{args.depth}_nh{args.num_head_DIT}/"
+path_dir = f"checkpoints_pred16_hist32_vae_nl{args.num_layer}_nh_vae{args.num_head}_f{args.factor}_bs{args.batch_size}_dr{args.dropout}_cce{args.cce_weight}_dit_hd{args.hidden_size}_d{args.depth}_nh_dit{args.num_head_DIT}/"
 os.makedirs(path_dir, exist_ok=True)
 print("=" * 60)
 print(f"[Dossier de sauvegarde] : {path_dir}")
@@ -155,7 +157,7 @@ print(f"[Dossier de sauvegarde] : {path_dir}")
 # Découpage des datasets
 data_train = create_windows(data_train, history_len, prediction_len)
 data_val = create_windows(data_val, history_len, prediction_len)
-data_test = create_windows(data_test[:500], history_len, prediction_len)
+data_test = create_windows(data_test, history_len, prediction_len)
 
 # Mélange aléatoire du dataset
 random.seed(42)
@@ -193,6 +195,7 @@ num_categories = len(unique_cats)
 train_dataset = TPPSequenceDataset(train_sequences, args.window_len, num_mean, num_std, cat_to_id)
 val_dataset = TPPSequenceDataset(val_sequences, args.window_len, num_mean, num_std, cat_to_id)
 test_dataset = TPPSequenceDataset(test_sequences, args.window_len, num_mean, num_std, cat_to_id)
+test_dataset = torch.utils.data.Subset(test_dataset, range(200))
 
 train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
@@ -230,7 +233,8 @@ vae = Model_VAE(
     n_head=args.num_head, 
     factor=args.factor, 
     bias=True, 
-    transformer=True
+    transformer=True,
+    dropout=args.dropout
 ).to(device)
 
 optimizer_vae = torch.optim.Adam(vae.parameters(), lr=1e-3)
@@ -408,7 +412,8 @@ flow_model = DiT(
     depth=args.depth,
     num_heads=args.num_head_DIT,
     mlp_ratio=args.mlp_ratio,
-    learn_sigma=False
+    learn_sigma=False,
+    dropout=args.dropout
 ).to(device)
 
 optimizer_flow = torch.optim.AdamW(flow_model.parameters(), lr=1e-4)

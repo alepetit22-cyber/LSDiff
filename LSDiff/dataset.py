@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from sklearn.preprocessing import MinMaxScaler, QuantileTransformer, StandardScaler
+from sklearn.preprocessing import MinMaxScaler, QuantileTransformer, RobustScaler, StandardScaler
 from typing import List, Dict, Any, Optional, Tuple
 
 
@@ -131,31 +131,32 @@ class PatientDataset(Dataset):
             with open(self.cat_vocab_path, 'w', encoding='utf-8') as f:
                 json.dump(vocabs, f)
 
-            # Construction des mappings de permutation pour le soft-encoding
-            self.cat_permutations = {}
-            self.cat_inv_permutations = {}
-            
-            for col in self.categorical_cols:
-                self.cat_permutations[col] = []
-                self.cat_inv_permutations[col] = []
+            if self.cat_mode == "duplicated":
+                # Construction des mappings de permutation pour le soft-encoding
+                self.cat_permutations = {}
+                self.cat_inv_permutations = {}
                 
-                encoded_vals = list(range(len(vocabs[col])))
-                for d in range(self.cat_embed_dim):
-                    rng = np.random.RandomState(self.cat_seed + col + d * 1000)
-                    permuted = rng.permutation(encoded_vals).tolist()
+                for col in self.categorical_cols:
+                    self.cat_permutations[col] = []
+                    self.cat_inv_permutations[col] = []
                     
-                    self.cat_permutations[col].append(
-                        {int(k): int(v) for k, v in zip(encoded_vals, permuted)}
-                    )
-                    self.cat_inv_permutations[col].append(
-                        {int(v): int(k) for k, v in zip(encoded_vals, permuted)}
-                    )
+                    encoded_vals = list(range(len(vocabs[col])))
+                    for d in range(self.cat_embed_dim):
+                        rng = np.random.RandomState(self.cat_seed + col + d * 1000)
+                        permuted = rng.permutation(encoded_vals).tolist()
+                        
+                        self.cat_permutations[col].append(
+                            {int(k): int(v) for k, v in zip(encoded_vals, permuted)}
+                        )
+                        self.cat_inv_permutations[col].append(
+                            {int(v): int(k) for k, v in zip(encoded_vals, permuted)}
+                        )
 
-            with open(self.cat_permutation_path, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "cat_permutations": self.cat_permutations,
-                    "cat_inv_permutations": self.cat_inv_permutations
-                }, f)
+                with open(self.cat_permutation_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "cat_permutations": self.cat_permutations,
+                        "cat_inv_permutations": self.cat_inv_permutations
+                    }, f)
                 
         else:
             # Chargement depuis les fichiers existants
@@ -164,25 +165,26 @@ class PatientDataset(Dataset):
                     vocabs_str = json.load(f)
                     vocabs = {int(k): v for k, v in vocabs_str.items()}
 
-            if os.path.exists(self.cat_permutation_path):
-                with open(self.cat_permutation_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.cat_permutations = {int(k): v for k, v in data["cat_permutations"].items()}
-                    self.cat_inv_permutations = {int(k): v for k, v in data["cat_inv_permutations"].items()}
-                    
-                    # Conversion des clés en int pour les sous-dictionnaires
-                    for col in self.categorical_cols:
-                        for d in range(self.cat_embed_dim):
-                            self.cat_permutations[col][d] = {
-                                int(k): int(v) for k, v in self.cat_permutations[col][d].items()
-                            }
-                            self.cat_inv_permutations[col][d] = {
-                                int(k): int(v) for k, v in self.cat_inv_permutations[col][d].items()
-                            }
-            else:
-                raise FileNotFoundError(
-                    f"Fichier de permutations catégorielles introuvable : {self.cat_permutation_path}"
-                )
+            if self.cat_mode == "duplicated":
+                if os.path.exists(self.cat_permutation_path):
+                    with open(self.cat_permutation_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        self.cat_permutations = {int(k): v for k, v in data["cat_permutations"].items()}
+                        self.cat_inv_permutations = {int(k): v for k, v in data["cat_inv_permutations"].items()}
+                        
+                        # Conversion des clés en int pour les sous-dictionnaires
+                        for col in self.categorical_cols:
+                            for d in range(self.cat_embed_dim):
+                                self.cat_permutations[col][d] = {
+                                    int(k): int(v) for k, v in self.cat_permutations[col][d].items()
+                                }
+                                self.cat_inv_permutations[col][d] = {
+                                    int(k): int(v) for k, v in self.cat_inv_permutations[col][d].items()
+                                }
+                else:
+                    raise FileNotFoundError(
+                        f"Fichier de permutations catégorielles introuvable : {self.cat_permutation_path}"
+                    )
 
         return vocabs
 
@@ -330,8 +332,13 @@ class PatientDataset(Dataset):
         flat_all[inds] = np.take(col_means, inds[1])
 
         if self.fit_stats:
-            # Ajout de bruit (jitter) sur les variables discrètes/catégorielles pour la normalisation
-            num_to_jitter = self.num_discrete + self.num_categorical * self.cat_embed_dim
+            if self.cat_mode == "duplicated":
+                # En duplicated, les colonnes discrètes et catégorielles (soft-encoded) sont dans le flottant
+                num_to_jitter = self.num_discrete + self.num_categorical * self.cat_embed_dim
+            else:
+                # En embedded, seules les colonnes discrètes sont dans le flottant
+                num_to_jitter = self.num_discrete
+
             if num_to_jitter > 0:
                 noise = np.random.uniform(-0.5, 0.5, size=(flat_all.shape[0], num_to_jitter))
                 flat_all[:, self.num_continuous:] += noise
@@ -348,6 +355,13 @@ class PatientDataset(Dataset):
                 self.scaler = StandardScaler()
             elif self.normalization == "minmax":
                 self.scaler = MinMaxScaler()
+            elif self.normalization == "robust":
+                self.scaler = RobustScaler(
+                with_centering=True,
+                with_scaling=True,
+                quantile_range=(5.0, 95.0),
+                unit_variance=False,
+            )
             else:
                 raise ValueError(f"Type de normalisation non supporté : {self.normalization}")
             
@@ -378,6 +392,7 @@ class PatientDataset(Dataset):
         Dénormalise un batch de données [B, L, C] ou [L, C].
         Retourne les données dans l'espace d'origine (les variables discrètes/catégorielles sont arrondies).
         """
+        
         squeeze = False
         if batch.ndim == 2:
             batch = batch[np.newaxis, ...]
@@ -388,18 +403,34 @@ class PatientDataset(Dataset):
         else:
             n_norm = self.num_continuous + self.num_discrete
 
-        if n_norm > 0:
-            flat = batch.reshape(-1, n_norm)
-            restored = self.scaler.inverse_transform(flat).reshape(batch.shape[0], -1, n_norm)
-
-            # Arrondi pour les variables discrètes et catégorielles
-            num_to_round = self.num_discrete + self.num_categorical * self.cat_embed_dim
-            if num_to_round > 0:
-                restored[..., self.num_continuous:n_norm] = np.round(restored[..., self.num_continuous:n_norm])
-
-            res = restored
-        else:
+        if n_norm == 0:
             res = batch
+        else:
+            # Séparation des colonnes
+            if self.cat_mode == "embedded" and batch.shape[-1] > n_norm:
+                float_part = batch[..., :n_norm]
+                cat_part = batch[..., n_norm:]
+                # Dénormalisation de la partie flottante
+                flat_float = float_part.reshape(-1, n_norm)
+                restored_float = self.scaler.inverse_transform(flat_float).reshape(float_part.shape)
+                # Arrondi des variables discrètes (si présentes)
+                if self.num_discrete > 0:
+                    restored_float[..., self.num_continuous:] = np.round(restored_float[..., self.num_continuous:])
+                # Recomposition
+                res = np.concatenate([restored_float, cat_part], axis=-1)
+            else:
+                # Cas standard (duplicated ou embedded sans catégories dans le batch)
+                flat = batch.reshape(-1, n_norm)
+                restored = self.scaler.inverse_transform(flat).reshape(batch.shape[0], -1, n_norm)
+                # Arrondi pour les variables discrètes et catégorielles (duplicated)
+                num_to_round = self.num_discrete
+                if self.cat_mode == "duplicated":
+                    num_to_round += self.num_categorical * self.cat_embed_dim
+                if num_to_round > 0:
+                    restored[..., self.num_continuous:self.num_continuous + num_to_round] = np.round(
+                        restored[..., self.num_continuous:self.num_continuous + num_to_round]
+                    )
+                res = restored
 
         return res[0] if squeeze else res
 
@@ -409,6 +440,9 @@ class PatientDataset(Dataset):
         data : array dénormalisé [B, L, C_total]
         Retourne : array [B, L, num_categorical] avec les indices des valeurs originales.
         """
+        if self.cat_mode != "duplicated":
+            raise ValueError("aggregate_cat_duplicates : Cette méthode ne s'applique qu'en mode 'duplicated'.")
+                
         B, L, _ = data.shape
         out = np.zeros((B, L, self.num_categorical), dtype=np.int64)
 

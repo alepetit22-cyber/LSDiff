@@ -1,0 +1,62 @@
+from itertools import product
+from snakemake.utils import format
+
+GRID = {
+    "nl":      [4, 5], 
+    "nh_vae":  [8, 16],
+    "f":       [16],
+    "bs":      [64, 128],
+    "dr":      [0.1, 0.2],
+    "cce":     [0.15, 0.05, 0.25],
+    "hd":      [160, 320],
+    "d":       [9],
+    "nh_dit":  [8, 16]
+}
+
+def make_id(cfg):
+    return (f"vae_nl{cfg['nl']}_nh_vae{cfg['nh_vae']}_f{cfg['f']}_bs{cfg['bs']}_dr{cfg['dr']}_cce{cfg['cce']}_dit_hd{cfg['hd']}_d{cfg['d']}_nh_dit{cfg['nh_dit']}")
+
+CONFIGS    = [dict(zip(GRID.keys(), v)) for v in product(*GRID.values())]
+CONFIG_MAP = {make_id(c): c for c in CONFIGS}
+
+CKPT_DIR = "checkpoints_pred16_hist32_{run_id}"
+
+def ckpt(cfg, filename):
+    return f"{CKPT_DIR.format(run_id=make_id(cfg))}/{filename}"
+
+rule all:
+    input:
+        [ckpt(c, "gen_data_dit.npy") for c in CONFIGS]
+
+rule train_adiff4tpp:
+    output:
+        real       = CKPT_DIR.format(run_id="{run_id}") + "/real_data_dit.npy",
+        gen        = CKPT_DIR.format(run_id="{run_id}") + "/gen_data_dit.npy",
+        prediction = CKPT_DIR.format(run_id="{run_id}") + "/dit_custom_model.pt",
+    log:
+        CKPT_DIR.format(run_id="{run_id}") + "/training.log",
+    params:
+        nl           = lambda w: CONFIG_MAP[w.run_id]["nl"],
+        nh_vae       = lambda w: CONFIG_MAP[w.run_id]["nh_vae"],
+        f            = lambda w: CONFIG_MAP[w.run_id]["f"],
+        bs           = lambda w: CONFIG_MAP[w.run_id]["bs"],
+        dr           = lambda w: CONFIG_MAP[w.run_id]["dr"],
+        cce          = lambda w: CONFIG_MAP[w.run_id]["cce"],
+        hd           = lambda w: CONFIG_MAP[w.run_id]["hd"],
+        d            = lambda w: CONFIG_MAP[w.run_id]["d"],
+        nh_dit       = lambda w: CONFIG_MAP[w.run_id]["nh_dit"],
+    shell:
+        """
+        mkdir -p checkpoints_pred16_hist32_{wildcards.run_id}
+        python -u AD4T_train_dit.py \
+            --num_layer {params.nl} \
+            --num_head_VAE {params.nh_vae} \
+            --factor {params.f} \
+            --batch_size {params.bs} \
+            --dropout {params.dr} \
+            --cce_weight {params.cce} \
+            --hidden_size {params.hd} \
+            --depth {params.d} \
+            --num_head_DIT {params.nh_dit} \
+            > {log} 2>&1
+        """

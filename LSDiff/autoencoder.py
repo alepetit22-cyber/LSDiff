@@ -44,7 +44,9 @@ class MixedInputProjection(nn.Module):
     """
     Projette un batch (flottant unifié) vers la dimension attendue.
     """
-    def __init__(self, cat_mode: str = "duplicated", cat_vocab_sizes: Optional[int] = None, cat_embed_dim: int = 6):
+    def __init__(self, cat_mode: str = "duplicated",
+                cat_vocab_sizes: Optional[int] = None,
+                cat_embed_dim: int = 6):
         super().__init__()
         self.cat_mode = cat_mode
         if cat_mode == "embedded" and cat_vocab_sizes:

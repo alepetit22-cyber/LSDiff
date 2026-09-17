@@ -199,18 +199,16 @@ class Transformer(nn.Module):
         n_heads: int,
         d_out: int,
         d_ffn_factor: int,
-        attention_dropout = 0.0,
-        ffn_dropout = 0.0,
-        residual_dropout = 0.0,
+        dropout=0.0,
         activation = 'relu',
         prenormalization = True,
         initialization = 'kaiming',      
     ):
         super().__init__()
-
+        attention_dropout=dropout
         def make_normalization():
             return nn.LayerNorm(d_token)
-
+        
         d_hidden = int(d_token * d_ffn_factor)
         self.layers = nn.ModuleList([])
         for layer_idx in range(n_layers):
@@ -237,8 +235,8 @@ class Transformer(nn.Module):
         # self.last_activation = lib.get_nonglu_activation_fn(activation)
         self.prenormalization = prenormalization
         self.last_normalization = make_normalization() if prenormalization else None
-        self.ffn_dropout = ffn_dropout
-        self.residual_dropout = residual_dropout
+        self.ffn_dropout = dropout
+        self.residual_dropout = dropout
         self.head = nn.Linear(d_token, d_out)
 
 
@@ -303,7 +301,7 @@ class AE(nn.Module):
         return h
 
 class VAE(nn.Module):
-    def __init__(self, d_numerical, categories, num_layers, hid_dim, n_head = 1, factor = 4, bias = True, transformer=True):
+    def __init__(self, d_numerical, categories, num_layers, hid_dim, n_head = 1, factor = 4, bias = True, transformer=True, dropout=0):
         super(VAE, self).__init__()
  
         self.d_numerical = d_numerical
@@ -315,10 +313,10 @@ class VAE(nn.Module):
         self.Tokenizer = Tokenizer(d_numerical, categories, d_token, bias = bias)
 
         if transformer:
-            self.encoder_mu = Transformer(num_layers, hid_dim, n_head, hid_dim, factor)
-            self.encoder_logvar = Transformer(num_layers, hid_dim, n_head, hid_dim, factor)
+            self.encoder_mu = Transformer(num_layers, hid_dim, n_head, hid_dim, factor, dropout=dropout)
+            self.encoder_logvar = Transformer(num_layers, hid_dim, n_head, hid_dim, factor, dropout=dropout)
 
-            self.decoder = Transformer(num_layers, hid_dim, n_head, hid_dim, factor)
+            self.decoder = Transformer(num_layers, hid_dim, n_head, hid_dim, factor, dropout=dropout)
         else:
             self.encoder_mu = MLP2(d_token,64,d_token)
             self.encoder_logvar = MLP2(d_token,64,d_token)
@@ -377,10 +375,10 @@ class Reconstructor(nn.Module):
 
 
 class Model_VAE(nn.Module):
-    def __init__(self, num_layers, d_numerical, categories, d_token, n_head = 1, factor = 4,  bias = True, transformer=True):
+    def __init__(self, num_layers, d_numerical, categories, d_token, n_head = 1, factor = 4,  bias = True, transformer=True, dropout=0):
         super(Model_VAE, self).__init__()
 
-        self.VAE = VAE(d_numerical, categories, num_layers, d_token, n_head = n_head, factor = factor, bias = bias, transformer = transformer)
+        self.VAE = VAE(d_numerical, categories, num_layers, d_token, n_head = n_head, factor = factor, bias = bias, transformer = transformer, dropout=dropout)
         self.Reconstructor = Reconstructor(d_numerical, categories, d_token)
 
     def get_embedding(self, x_num, x_cat):

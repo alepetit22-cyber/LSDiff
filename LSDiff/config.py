@@ -89,8 +89,9 @@ class AutoencoderConfig(BaseModel):
     seq_len: int
     input_channels: int
     stride: int
-    target_kld: float
+    kld_weight: float
     spectral_weight: float
+    cce_weight: float
     scaler_path: str
     checkpoint_path: str
     best_model_path: str
@@ -122,8 +123,9 @@ class HistoryAutoencoderConfig(BaseModel):
     seq_len: int
     input_channels: int
     stride: int
-    target_kld: float
+    kld_weight: float
     spectral_weight: float
+    cce_weight: float
     hist_scaler_path: str
     checkpoint_path: str
     best_model_path: str
@@ -176,12 +178,21 @@ class TrainingConfig(BaseModel):
     epochs_diffusion: int
     device: str
 
+class InferenceConfig(BaseModel):
+    vae_real_path: str
+    vae_gen_path: str
+    vae_evaluator_path: str
+    dit_real_path: str
+    dit_gen_path: str
+    dit_evaluator_path: str
+
 class AppConfig(BaseModel):
     dataset: DatasetConfig
     autoencoder: AutoencoderConfig
     history_autoencoder: HistoryAutoencoderConfig
     diffusion: DiffusionConfig
     training: TrainingConfig
+    inference: InferenceConfig
 
     @classmethod
     def load(cls, path: str = "config.yaml") -> 'AppConfig':
@@ -200,7 +211,9 @@ class AppConfig(BaseModel):
             autoencoder=AutoencoderConfig(**data.get('autoencoder', {})),
             history_autoencoder=HistoryAutoencoderConfig(**data.get('history_autoencoder', {})),
             diffusion=DiffusionConfig(**data.get('diffusion', {})),
-            training=TrainingConfig(**data.get('training', {}))
+            training=TrainingConfig(**data.get('training', {})),
+            inference=InferenceConfig(**data.get('inference', {}))
+
         )
 
 def load_config(path: Optional[str] = None) -> 'AppConfig':
@@ -220,7 +233,8 @@ def load_config(path: Optional[str] = None) -> 'AppConfig':
         autoencoder=AutoencoderConfig(**data.get('autoencoder', {})),
         history_autoencoder=HistoryAutoencoderConfig(**data.get('history_autoencoder', {})),
         diffusion=DiffusionConfig(**data.get('diffusion', {})),
-        training=TrainingConfig(**data.get('training', {}))
+        training=TrainingConfig(**data.get('training', {})),
+        inference=InferenceConfig(**data.get('inference', {}))
     )
 
 # Remplacer l'appel existant par :

@@ -26,7 +26,7 @@ from time_grad_estimator import TimeGradEstimator
 from gluonts.evaluation.backtest import make_evaluation_predictions
 
 
-sys.path.append("../")
+sys.path.append("../../")
 from Data.metrics import DatasetEvaluator
 from Data.utils import LogFilterProxy, create_windows, analyser_evenements_dataset
 
@@ -70,7 +70,9 @@ def parse_args():
     parser.add_argument('--num_layer', type=int, default=3, help='Number of layers')
     parser.add_argument('--num_cell', type=int, default=80, help='Number of cells')
     parser.add_argument('--residual_channels', type=int, default=16, help='Number of residual channels')
+    parser.add_argument('--residual_layers', type=int, default=8, help='Number of residual layers')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--dropout', type=float, default=0.1, help='dropout_rate')
     parser.add_argument('--cce_weight', type=float, default=0.5, help='CCE weight')
 
     args=parser.parse_args()
@@ -80,11 +82,13 @@ args = parse_args()
 num_layer = args.num_layer
 num_cell = args.num_cell
 residual_channels = args.residual_channels
+residual_layers = args.residual_layers
 batch_size = args.batch_size
+dropout = args.dropout
 cce_weight = args.cce_weight
 
 # Chargement des données
-chemin_fichier = '../Data/db_meta_2000_FR.json'
+chemin_fichier = '../Data/db_200.json'
 with open(chemin_fichier, 'r') as f:
     data = json.load(f)
 
@@ -104,7 +108,7 @@ history_len = 32
 window_len = history_len + prediction_len
 
 # Configuration du dossier de sauvegarde
-path_dir = f"checkpoints_pred{prediction_len}_hist{history_len}_nl{num_layer}_nc{num_cell}_rc{residual_channels}_bs{batch_size}_cce{cce_weight}/"
+path_dir = f"checkpoints_pred{prediction_len}_hist{history_len}_nl{num_layer}_nc{num_cell}_rc{residual_channels}_rl{residual_layers}_bs{batch_size}_d{dropout}_cce{cce_weight}/"
 os.makedirs(path_dir, exist_ok=True)
 print("=" * 60)
 print(f"[Dossier de sauvegarde] : {path_dir}")
@@ -192,7 +196,7 @@ for patient in data_test:
 # Conversion finale en ListDataset GluonTS
 train_data = ListDataset(train_ds_list, freq="1min", one_dim_target=False)
 val_data = ListDataset(val_ds_list, freq="1min", one_dim_target=False)
-test_data = ListDataset(test_ds_list[:500], freq="1min", one_dim_target=False)
+test_data = ListDataset(test_ds_list[:200], freq="1min", one_dim_target=False)
 
 print(f"Nombre de patients Train: {len(train_data)}")
 print(f"Nombre de patients Val: {len(val_data)}")
@@ -227,13 +231,13 @@ estimator = TimeGradEstimator(
     lags_seq=[1, 2, 4],
     
     # Paramètres d'entrainement
-    dropout_rate=0.1, # Défaut 0.1
+    dropout_rate=dropout, # Défaut 0.1
     loss_type='l2', # Défaut l2
     scaling=True, # Défaut True
     diff_steps=100, # Défaut 100
     beta_end=0.1, # Défaut 0.1
     beta_schedule="linear", # Défaut "linear"
-    residual_layers=8, # Défaut 8
+    residual_layers=residual_layers, # Défaut 8
     residual_channels=residual_channels, # Défaut 8 --> Faire varier à [16, 32, 64]
     
     # Paramètres du trainer

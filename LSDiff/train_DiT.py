@@ -51,7 +51,7 @@ def main():
     else:
         logger.info("Mode sans guidage par les événements")
 
-    checkpoint_dir = os.path.dirname(config.autoencoder.scaler_path)  # ex: "results/vae_nh_8/checkpoints"
+    checkpoint_dir = os.path.dirname(config.autoencoder.scaler_path)
     exp_dir = os.path.dirname(checkpoint_dir)
     
     ###################################################
@@ -94,6 +94,7 @@ def main():
         "normalization": config.dataset.normalization,
         "scaler_path": config.autoencoder.scaler_path,
         "meta_config": config.dataset.meta_config,
+        "cat_mode": config.dataset.cat_mode,
         "cat_embed_dim": config.dataset.cat_embed_dim,
         "cat_seed": config.dataset.cat_seed,
         "event_code_index": config.dataset.event_code_index,
@@ -537,17 +538,8 @@ def main():
             gen_data  = fake_denorm
 
     elif config.dataset.cat_mode == "embedded":
-        # En mode embedded, le scaler s'applique uniquement sur les canaux flottants
-        num_float_ch = train_dataset.num_effective_float_channels
-        
-        real_float_denorm = train_dataset.denormalize(real_np[..., :num_float_ch])
-        fake_float_denorm = train_dataset.denormalize(gen_np[..., :num_float_ch])
-        
-        real_cat = real_np[..., num_float_ch:]
-        fake_cat = gen_np[..., num_float_ch:]
-        
-        real_data = np.concatenate([real_float_denorm, real_cat], axis=-1)
-        gen_data  = np.concatenate([fake_float_denorm, fake_cat], axis=-1)
+        real_data = train_dataset.denormalize(real_np)
+        gen_data  = train_dataset.denormalize(gen_np)
 
     fin_inf = time.time()
     logger.info("[Inférence terminée]")
@@ -559,9 +551,8 @@ def main():
     gen_data[:,:,7] = np.round(gen_data[:, :, 7])
 
     # Sauvegarde finale des fichiers NumPy
-    os.makedirs(f"{exp_dir}/checkpoints", exist_ok=True)
-    real_path = f"{exp_dir}/checkpoints/real_data_diffusion.npy"
-    gen_path = f"{exp_dir}/checkpoints/gen_data_diffusion.npy"
+    real_path = f"{config.inference.dit_real_path}.npy"
+    gen_path = f"{config.inference.dit_gen_path}.npy"
 
     np.save(real_path, real_data)
     np.save(gen_path, gen_data)
@@ -593,7 +584,7 @@ def main():
         real_data, 
         gen_data,
         col_names=["FC", "PAS", "PAM", "PAD", "Temp", "SpO2", "FR", "event_code"],
-        path_dir=f"{exp_dir}/checkpoints/diffusion/"
+        path_dir= config.inference.dit_evaluator_path
     )
 
     evaluator.run_full_analysis()

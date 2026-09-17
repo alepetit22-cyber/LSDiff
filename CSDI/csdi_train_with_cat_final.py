@@ -10,7 +10,6 @@
 import os
 import sys
 import time
-from tqdm import tqdm
 import torch
 import argparse
 import numpy as np
@@ -18,9 +17,9 @@ import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
 
-sys.path.append("../")
+sys.path.append("../../")
 from csdi_utils_last import get_dataloaders, inference, CSDI_Custom 
-from Data.metrics import DatasetEvaluator 
+from metrics2 import DatasetEvaluator 
 from Data.utils import analyser_evenements_dataset
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -31,8 +30,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 def parse_args():
     parser = argparse.ArgumentParser(description='CSDI Training Script')
     parser.add_argument('--num_layer', type=int, default=4, help='Number of layers')
+    parser.add_argument('--num_heads', type=int, default=8, help='Number of head')
     parser.add_argument('--channels', type=int, default=128, help='Number of residual channels')
     parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+    parser.add_argument('--diffusion_embedding_dim', type=int, default=128, help='diffusion_embedding_dim')
     parser.add_argument('--cce_weight', type=float, default=0.2, help='CCE weight')
 
     args=parser.parse_args()
@@ -41,7 +42,9 @@ def parse_args():
 args = parse_args()
 num_layer = args.num_layer
 channels = args.channels
+num_heads = args.num_heads
 batch_size = args.batch_size
+diffusion_embedding_dim = args.diffusion_embedding_dim
 cce_weight = args.cce_weight
 
 # Dimension de contexte et d'inférence
@@ -61,8 +64,8 @@ config = {
     "diffusion": {
         "layers": num_layer,
         "channels": channels,
-        "nheads": 8,
-        "diffusion_embedding_dim": 128,
+        "nheads": num_heads,
+        "diffusion_embedding_dim": diffusion_embedding_dim,
         "beta_start": 0.0001,
         "beta_end": 0.5,
         "num_steps": 50,
@@ -77,7 +80,7 @@ config = {
 }
 
 # Création du dossier de sortie
-path = f"checkpoints_pred{prediction_len}_hist{history_len}_nl{num_layer}_c{channels}_bs{batch_size}_cce{cce_weight}/"
+path = f"checkpoints_pred{prediction_len}_hist{history_len}_nl{num_layer}_c{channels}_nh{num_heads}_bs{batch_size}_ded{diffusion_embedding_dim}_cce{cce_weight}/"
 os.makedirs(path, exist_ok=True)
 print("=" * 60)
 print(f"[Dossier de sauvegarde] : {path}")
@@ -88,11 +91,10 @@ print(f"[Dossier de sauvegarde] : {path}")
 
 # Récupération de données
 train_loader, val_loader, test_loader, train_dataset, num_classes_event = get_dataloaders(
-    "../Data/db_meta_2000_FR.json",
+    "../Data/db_200.json",
     pred_length=prediction_len,
     history_length=history_len,
-    batch_size=config["train"]["batch_size"]
-
+    batch_size=config["train"]["batch_size"],
     )
 
 # Configuration des métadonnées
@@ -146,10 +148,8 @@ for epoch in range(config["train"]["epochs"]):
     model.train()
     total_loss = 0
     
-    pbar_train = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{config['train']['epochs']} [Train]")
-    
     steps_train = 0
-    for batch in pbar_train:
+    for batch in train_loader:
         optimizer.zero_grad()
         loss = model(batch)
         loss.backward()
@@ -158,30 +158,27 @@ for epoch in range(config["train"]["epochs"]):
         total_loss += loss.item()
         steps_train += 1
         
-        pbar_train.set_postfix({"loss_batch": f"{loss.item():.4f}"})
-        
     moyenne_train_loss = total_loss / steps_train
         
     model.eval()
     val_loss = 0
     steps_val = 0
     
-    pbar_val = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{config['train']['epochs']} [Val]", leave=False)
-    
     with torch.no_grad():
-        for batch in pbar_val:
+        for batch in val_loader:
             loss = model(batch)
             val_loss += loss.item()
             steps_val += 1
-            
+
     moyenne_val_loss = val_loss / steps_val
     
     # Sauvegarde
     if moyenne_val_loss < best_val_loss:
         best_val_loss = moyenne_val_loss
-        torch.save(model.state_dict(), os.path.join(path, "best_model.pt"))
+        best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        torch.save(best_state, os.path.join(path, "best_model.pt"))
         
-    print(f"Epoch {epoch + 1} - Train Loss: {moyenne_train_loss:.5f} | Val Loss: {moyenne_val_loss:.5f}\n")
+    print(f"Epoch {epoch + 1}/{config['train']['epochs']} - Train Loss: {moyenne_train_loss:.5f} | Val Loss: {moyenne_val_loss:.5f}")
 
 fin_train = time.time()
 print("[Entraînement terminé]")
@@ -195,6 +192,10 @@ print(f"[Modèle sauvegardé] : {modele_path}")
 #####################################
 # INFÉRENCE                         #
 #####################################
+# Chargment du meilleur modèle
+if best_state is not None:
+    model.load_state_dict(best_state)
+    model.to(device)
 
 print("=" * 60)
 print("[Début de l'inférence]")
@@ -225,8 +226,8 @@ print(f"Format de real_data : {real_data.shape}  (Batch, Temporel, Constantes)")
 print(f"Format de gen_data  : {gen_data.shape}  (Batch, Temporel, Constantes)")
 
 # Enregistrement des datasets
-np.save(f"{path}real_data.npy", real_data)
-np.save(f"{path}gen_data.npy", gen_data)
+np.save(os.path.join(path, "real_data.npy"), real_data)
+np.save(os.path.join(path, "gen_data.npy"), gen_data)
 
 print(f"Datasets et modèle sauvegardés dans : {path}")
 
