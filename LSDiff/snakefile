@@ -5,7 +5,7 @@ from itertools import product
 import yaml
 
 # =============================================================================
-# GRILLES
+# GRIDS
 # =============================================================================
 
 GRID_VAE = {
@@ -16,7 +16,7 @@ GRID_VAE = {
 
 GRID_DIT = {
     "nh":    [8, 16, 32],         # num_heads DiT 
-    "nl":    [8],             # num_layers DiT
+    "nl":    [8],                 # num_layers DiT
     "dit_d": [0.1, 0.2],          # dropout DiT
     "cfg":   [0.5, 1.5],          # cfg_scale 
 }
@@ -47,7 +47,7 @@ DIT_MAP = {
 }
 
 # =============================================================================
-# CHEMINS
+# PATHS
 # =============================================================================
 
 VAE_DIR_TMPL = "runs/{run_id}"
@@ -62,7 +62,7 @@ def _vae_of(dit_id):
 
 
 # =============================================================================
-# RÈGLE GLOBALE
+# GLOBAL RULES
 # =============================================================================
 
 rule all:
@@ -106,7 +106,7 @@ rule vae_train:
         outdir = params.outdir
         os.makedirs(outdir, exist_ok=True)
 
-        # VAE principal
+        # VAE main
         ae = cfg["autoencoder"]
         ae["latent_channel"]   = params.lc
         ae["cce_weight"]       = params.cce
@@ -115,7 +115,7 @@ rule vae_train:
         ae["best_model_path"]  = output.main_ckpt
         ae["scaler_path"]      = output.main_scaler
 
-        # VAE historique
+        # VAE history
         hae = cfg["history_autoencoder"]
         hae["latent_channel"]   = params.lc
         hae["cce_weight"]       = params.cce
@@ -124,17 +124,17 @@ rule vae_train:
         hae["best_model_path"]  = output.history_ckpt
         hae["hist_scaler_path"] = output.hist_scaler
 
-        # Inférence
+        # Inference
         inf = cfg["inference"]
         inf["vae_real_path"]       = f"{outdir}/real_data"
         inf["vae_gen_path"]        = f"{outdir}/gen_data"
         inf["vae_evaluator_path"]  = f"{outdir}/"
 
-        # Écriture du YAML spécifique au run
+        # Write the YAML specific to this run
         with open(output.config_yaml, "w") as f:
             yaml.safe_dump(cfg, f, sort_keys=False)
 
-        # Entraînements séquentiels
+        # Sequential training
         shell(r"""
             set -e
             echo "=== VAE MAIN ===" >> {log}
@@ -145,12 +145,12 @@ rule vae_train:
             python -u train_VAE.py --mode history \
                 --config {output.config_yaml} >> {log} 2>&1
 
-            echo "=== VAE terminés ===" >> {log}
+            echo "=== VAE completed ===" >> {log}
         """)
 
 
 # =============================================================================
-# ÉTAPE 2 — DiT, 1 run par config DiT, réutilise le VAE parent
+# STEP 2 — DiT, 1 run per DiT config, reuses the parent VAE
 # =============================================================================
 
 rule dit_train:
@@ -183,7 +183,7 @@ rule dit_train:
         outdir = params.outdir
         os.makedirs(outdir, exist_ok=True)
         
-        # Configuration des VAE
+        # VAE configuration
         cfg["autoencoder"]["latent_channel"]   = vae_cfg["lc"]
         cfg["autoencoder"]["cce_weight"]       = vae_cfg["cce"]
         cfg["autoencoder"]["dropout"]          = vae_cfg["vae_d"]
@@ -192,20 +192,20 @@ rule dit_train:
         cfg["history_autoencoder"]["cce_weight"]     = vae_cfg["cce"]
         cfg["history_autoencoder"]["dropout"]        = vae_cfg["vae_d"]
 
-        # Fichiers VAE (input)
+        # VAE (input)
         cfg["autoencoder"]["best_model_path"]          = input.main_ckpt
         cfg["autoencoder"]["scaler_path"]              = input.main_scaler
         cfg["history_autoencoder"]["best_model_path"]  = input.history_ckpt
         cfg["history_autoencoder"]["hist_scaler_path"] = input.hist_scaler
 
-        # Paramètres DiT à varier
+        # DiT parameters to vary
         dif = cfg["diffusion"]
         dif["num_heads"]  = params.nh
         dif["num_layers"] = params.nl
         dif["dropout"]    = params.dit_d
         dif["cfg_scale"]  = params.cfg
 
-        # Fichiers VAE
+        # VAE files
         cfg["autoencoder"]["best_model_path"]          = input.main_ckpt
         cfg["autoencoder"]["scaler_path"]              = input.main_scaler
         cfg["history_autoencoder"]["best_model_path"]  = input.history_ckpt
@@ -214,21 +214,21 @@ rule dit_train:
         dif["latent_scale_path"]      = output.latent_scale
         dif["hist_latent_scale_path"] = output.hist_latent_scale
 
-        # Sorties DiT
+        # DiT outputs
         dif["checkpoint_path"] = f"{outdir}/diffusion.pth"
         dif["best_model_path"] = output.ckpt
 
-        # Section inference pour train_DiT.py
+        # Inference section for train_DiT.py
         inf = cfg["inference"]
         inf["dit_real_path"]      = f"{outdir}/real_data_dit"
         inf["dit_gen_path"]       = f"{outdir}/gen_data_dit"
         inf["dit_evaluator_path"] = f"{outdir}/"
 
-        # Écriture du YAML spécifique au run
+        # Write the YAML specific to this run
         with open(output.config_yaml, "w") as f:
             yaml.safe_dump(cfg, f, sort_keys=False)
 
-        # Entraînement
+        # Training
         shell(r"""
             set -e
             python -u train_DiT.py --config {output.config_yaml} > {log} 2>&1

@@ -19,7 +19,7 @@ from diffusion_engine import DiffusionEngine, FlowMatchingScheduler, CFGWrapper
 from loss_functions import FlowMatchingLoss
 from metrics import DatasetEvaluator
 
-# Configuration du logging
+# Logging configuration 
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
@@ -33,9 +33,8 @@ logger = logging.getLogger(__name__)
 
 def main():    
     ###################################################
-    # CONFIGURATION DU PARSER
+    # PARSER CONFIGURATION
     ###################################################
-    # Configuration du parser
     parser = argparse.ArgumentParser(description="Entraînement des VAE de LSDiff")
     parser.add_argument("--config", type=str, default=None, help="Chemin du fichier config.yaml")
     args = parser.parse_args()
@@ -44,23 +43,23 @@ def main():
     num_cpu = multiprocessing.cpu_count()
     device = torch.device(config.training.device if torch.cuda.is_available() else "cpu")
 
-    # Configuration du mode conditionnel
+    # Configuration of the conditional mode
     has_event = len(config.dataset.event_code_index) > 0 if config.dataset.event_code_index is not None else False
     if has_event:
-        logger.info("Mode guidage par les événements")
+        logger.info("Conditional mode with events")
     else:
-        logger.info("Mode sans guidage par les événements")
+        logger.info("Unconditional mode without events")
 
     checkpoint_dir = os.path.dirname(config.autoencoder.scaler_path)
     exp_dir = os.path.dirname(checkpoint_dir)
     
     ###################################################
-    # CONFIGURATION DU DATASET
+    # DATASET CONFIGURATION
     ###################################################
     with open(config.dataset.json_path, 'r', encoding='utf-8') as f:
         all_patients_raw = json.load(f)
 
-    # Récupération des identifiants
+    # Retrieval of identifiers
     all_patient_ids = [p.get("patient_id", f"unknown_{i}") for i, p in enumerate(all_patients_raw)]
 
     seed = 42
@@ -79,12 +78,12 @@ def main():
     val_ids   = set(unique_patients[int(train_ratio * n):int((train_ratio + val_ratio) * n)])
     test_ids  = set(unique_patients[int((train_ratio + val_ratio) * n):])
 
-    # Filtrage des données brutes pour chaque ensemble
+    # Filtering raw data for each set
     train_raw = [p for p in all_patients_raw if p.get("patient_id", "unknown") in train_ids]
     val_raw   = [p for p in all_patients_raw if p.get("patient_id", "unknown") in val_ids]
     test_raw  = [p for p in all_patients_raw if p.get("patient_id", "unknown") in test_ids]
 
-    # Création des datasets
+    # Creation of datasets
     common_params = {
         "target_len": config.dataset.target_len,
         "hist_len": config.dataset.hist_len,
@@ -120,7 +119,7 @@ def main():
     test_dataset = torch.utils.data.Subset(test_dataset, range(1000))
 
 
-    # Création des DataLoaders
+    # Creation of DataLoaders
     train_loader = DataLoader(
         train_dataset, 
         batch_size=config.training.batch_size, 
@@ -150,7 +149,7 @@ def main():
     )
 
     ###################################################
-    # CONFIGURATION DES VAEs
+    # VAEs CONFIGURATION
     ###################################################
     cat_vocab_sizes = [
         len(train_dataset.cat_vocabs[col]) for col in config.dataset.categorical_indices
@@ -216,7 +215,7 @@ def main():
     )
     hist_vae.eval()
 
-    # Échelles des Latents
+    # Latent scales
     latent_scale = compute_latent_scale(
         vae,
         train_loader,
@@ -234,7 +233,7 @@ def main():
         max_batches=1000
     )
     
-    # Détermination de la forme latente
+    # Determination of the latent shape
     with torch.no_grad():
         dummy_f = torch.zeros(1, config.dataset.num_effective_float_channels, config.autoencoder.seq_len).to(device)
         dummy_c = torch.zeros(1, len(cat_vocab_sizes), config.autoencoder.seq_len, dtype=torch.long).to(device) if cat_vocab_sizes else None
@@ -242,7 +241,7 @@ def main():
         latent_shape = (mu.shape[1], mu.shape[2])
 
     ###################################################
-    # CONFIGURATION DU DiT
+    # DiT CONFIGURATION
     ###################################################
     engine_config = argparse.Namespace(
         embed_dim=config.diffusion.embed_dim,
@@ -269,7 +268,7 @@ def main():
         multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(0.999)
     )
 
-    # Optimiseur
+    # Optimizer
     optimizer = optim.AdamW(
         model.parameters(),
         lr=config.training.lr_diffusion,
@@ -297,17 +296,17 @@ def main():
     # Loss
     loss_function = FlowMatchingLoss()
 
-    logger.info(f"Nombre de séquences d'entraînement : {len(train_dataset)}")
-    logger.info(f"Nombre de séquences de validation : {len(val_dataset)}")
-    logger.info(f"Nombre de séquences de test : {len(test_dataset)}")
+    logger.info(f"Number of training sequences : {len(train_dataset)}")
+    logger.info(f"Number of validation sequences : {len(val_dataset)}")
+    logger.info(f"Number of test sequences : {len(test_dataset)}")
 
     ###################################################
-    # ENTRAINEMENT
+    # TRAINING
     ###################################################    
     logger.info("=" * 60)
-    logger.info("[Début de l'entraînement]")
+    logger.info("[Start of training]")
     debut_train = time.time()
-    logger.info(f"Heure de début de l'entraînement : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Start time of training : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     best_val_loss = float('inf')
 
@@ -322,7 +321,7 @@ def main():
             hist_feat_cat     = hist_cat.to(device, non_blocking=True)
             meta_dict         = {k: v.to(device, non_blocking=True) for k, v in meta_dict.items()}
             
-            # Conditionnement si has_event
+            # Conditioning if has_event
             cond_idx = event_seq.to(device, non_blocking=True) if has_event else None
             
             # CFG Dropout
@@ -342,7 +341,7 @@ def main():
             t = FlowMatchingScheduler.sample_logit_normal_t(x_0.shape[0], device)
             x_noisy, target = noise_scheduler.add_noise(x_0, t)
             
-            # Utilisation d'Autocast pour le Forward Pass
+            # Using Autocast for the Forward Pass
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=torch.cuda.is_available()):
                 v_pred = model(
                     x_noisy, t.view(-1, 1), 
@@ -357,10 +356,10 @@ def main():
                 train_mse, train_cos = loss_function(v_pred, target)
                 loss = train_mse
             
-            # Backward Pass avec le Scaler
+            # Backward Pass with the Scaler
             if scaler is not None:
                 scaler.scale(loss).backward()
-                scaler.unscale_(optimizer) # Unscale pour le clipping
+                scaler.unscale_(optimizer) # Unscale for clipping
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 scaler.step(optimizer)
                 scaler.update()
@@ -372,7 +371,6 @@ def main():
             lr_scheduler.step()
             ema_model.update_parameters(model)
 
-            # Accumulation pour les logs
             train_loss += loss.item() 
             train_mse_accum += train_mse.item()
             train_cos_accum += train_cos.item()
@@ -389,10 +387,10 @@ def main():
                 hist_feat_cat     = hist_cat.to(device, non_blocking=True)
                 meta_batch_dev    = {k: v.to(device, non_blocking=True) for k, v in meta_batch.items()}
                 
-                # Conditionnement si has_event
+                # Conditioning if has_event
                 cond_idx = event_seq.to(device, non_blocking=True) if has_event else None
                 
-                # Pas de dropout
+                # No dropout
                 drop_meta = torch.zeros(real_vitals_float.shape[0], dtype=torch.bool, device=device)
                 drop_hist = torch.zeros(real_vitals_float.shape[0], dtype=torch.bool, device=device)
                 force_uncond_event = torch.zeros(real_vitals_float.shape[0], dtype=torch.bool, device=device)
@@ -441,21 +439,21 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(ema_model.state_dict(), config.diffusion.best_model_path)
-            logger.info(f"Meilleur modèle sauvegardé. Val Loss: {best_val_loss:.6f}")
+            logger.info(f"Best model saved. Val Loss: {best_val_loss:.6f}")
 
     torch.save(ema_model.state_dict(), config.diffusion.checkpoint_path)
     fin_train = time.time()
-    logger.info(f"[Entraînement terminé] Meilleure Val Loss: {best_val_loss:.6f}")
-    logger.info(f"Heure de fin de l'entraînement : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"[Training completed] Best Val Loss: {best_val_loss:.6f}")
+    logger.info(f"Training end time : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 
     ###################################################
     # INFERENCE
     ###################################################
     logger.info("=" * 60)
-    logger.info("[Début de l'inférence]")
+    logger.info("[Starting inference]")
     debut_inf = time.time()
-    logger.info(f"Heure de début de l'inférence : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Inference start time : {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     ema_model.eval()
     model_for_cfg = ema_model.module if hasattr(ema_model, 'module') else ema_model
@@ -465,7 +463,7 @@ def main():
     fake_vitals_list = []
 
     with torch.no_grad():
-        for x_float, hist_float, meta_batch, x_cat, hist_cat, event_seq in tqdm(test_loader, desc="Inférence Test"):
+        for x_float, hist_float, meta_batch, x_cat, hist_cat, event_seq in tqdm(test_loader, desc="Inference Test"):
             real_vitals_float = x_float.to(device, non_blocking=True)
             hist_feat_float   = hist_float.to(device, non_blocking=True)
             real_vitals_cat   = x_cat.to(device, non_blocking=True)
@@ -474,14 +472,14 @@ def main():
             
             b = real_vitals_float.shape[0]
 
-            # Préparation des conditionnements latents
+            # Preparation of latent conditionings
             mu_hist, _ = hist_vae.encode(hist_feat_float, hist_feat_cat)
             z_hist = mu_hist * hist_latent_scale
 
-            # Conditionnement si has_event
+            # Conditioning if has_event
             cond_idx = event_seq.to(device, non_blocking=True) if has_event else None
                 
-            # Échantillonnage via le Flow Matching Scheduler
+            # Sampling via the Flow Matching Scheduler
             recon_samples = []
             for _ in range(config.diffusion.num_samples):
                 x_gen = noise_scheduler.sample(
@@ -494,7 +492,7 @@ def main():
                     meta_dict=meta_batch_dev
                 )
                 
-                # Décodage par le VAE principal
+                # Decoding by the main VAE
                 recon_float, recon_cat_logits = vae.decode(x_gen)
                 if config.dataset.cat_mode == "embedded" and recon_cat_logits is not None:
                     cat_preds = torch.stack([logits.argmax(dim=1) for logits in recon_cat_logits], dim=1)
@@ -514,15 +512,15 @@ def main():
 
             fake_vitals_list.append(recon_out)
 
-    # Concaténation globale de tous les lots
+    # Global concatenation of all batchs
     real_np = np.concatenate(real_vitals_list, axis=0)  # [Total_B, C_total, L]
     gen_np = np.concatenate(fake_vitals_list, axis=0)  # [Total_B, C_total, L]
 
-    # Permutation des axes
+    # Permutation of axes
     real_np = np.transpose(real_np, (0, 2, 1))
     gen_np = np.transpose(gen_np, (0, 2, 1))
 
-    # Dénormalisation
+    # Denormalization
     if config.dataset.cat_mode == "duplicated":
         real_denorm = train_dataset.denormalize(real_np)
         fake_denorm = train_dataset.denormalize(gen_np)
@@ -542,15 +540,15 @@ def main():
         gen_data  = train_dataset.denormalize(gen_np)
 
     fin_inf = time.time()
-    logger.info("[Inférence terminée]")
-    logger.info(f"Heure de fin de l'inférence : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("[Inference completed]")
+    logger.info(f"Inference end time : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Clip de la SpO2
+    # Clip of SpO2
     gen_data[:,:,5] = np.clip(gen_data[:,:,5], a_min=0.0, a_max=100.0)
-    # Arrondi des événements
+    # Rounding of events
     gen_data[:,:,7] = np.round(gen_data[:, :, 7])
 
-    # Sauvegarde finale des fichiers NumPy
+    # Save of NumPy files
     real_path = f"{config.inference.dit_real_path}.npy"
     gen_path = f"{config.inference.dit_gen_path}.npy"
 
@@ -558,23 +556,23 @@ def main():
     np.save(gen_path, gen_data)
 
 
-    logger.info("Sauvegarde des données d'inférence Terminée")
-    logger.info(f"Fichier Réel   : {real_path} (Shape: {real_data.shape})")
-    logger.info(f"Fichier Généré : {gen_path} (Shape: {gen_data.shape})")
+    logger.info("Save of inference data completed")
+    logger.info(f"Real file   : {real_path} (Shape: {real_data.shape})")
+    logger.info(f"Generated file : {gen_path} (Shape: {gen_data.shape})")
 
-    # Calcul du temps
+    # Calculation of time
     durée_train = fin_train - debut_train
     durée_inf = fin_inf - debut_inf
 
-    # Formatage en minutes:secondes
+    # Formatting in minutes:seconds
     m_train, s_train = divmod(durée_train, 60)
     m_inf, s_inf = divmod(durée_inf, 60)
 
     logger.info("=" * 60)
-    logger.info("[Evaluation de la durée d'entrainement et d'inférece]")
-    logger.info(f"Temps d'entraînement : {int(m_train)} min {int(s_train)} s (Total: {durée_train:.2f} secondes)")
-    logger.info(f"Temps d'inférence    : {int(m_inf)} min {int(s_inf)} s (Total: {durée_inf:.2f} secondes)")
-    logger.info(f"Temps total du run   : {int((durée_train + durée_inf) // 60)} min {int((durée_train + durée_inf) % 60)} s")
+    logger.info("[Evaluation of training and inference duration]")
+    logger.info(f"Training time   : {int(m_train)} min {int(s_train)} s (Total: {durée_train:.2f} seconds)")
+    logger.info(f"Inference time  : {int(m_inf)} min {int(s_inf)} s (Total: {durée_inf:.2f} seconds)")
+    logger.info(f"Total run time  : {int((durée_train + durée_inf) // 60)} min {int((durée_train + durée_inf) % 60)} s")
     logger.info("=" * 60)
       
     ###################################################

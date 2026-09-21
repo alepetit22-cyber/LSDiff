@@ -10,8 +10,8 @@ from typing import List, Dict, Any, Optional, Tuple
 
 class PatientDataset(Dataset):
     """
-    Dataset optimisé pour les séries temporelles cliniques de LSDiff.
-    Gère les variables continues, discrètes et catégorielles.
+    Optimized dataset for time series of LSDiff.
+    Manages continuous, discrete and categorical variables.
     """
 
     def __init__(
@@ -32,7 +32,7 @@ class PatientDataset(Dataset):
         normalization: str = "standard",
         event_code_index: Optional[List[int]] = None,
     ):
-        # Paramètres de base
+        # Basic parameters
         self.target_len = target_len
         self.hist_len = hist_len
         self.continuous_cols = continuous_indices
@@ -51,10 +51,10 @@ class PatientDataset(Dataset):
 
         self.event_code_index = event_code_index
 
-        # Index de début des variables catégorielles dans le tenseur complet
+        # Index of start of categorical variables in the complete tensor
         self.cat_map_start_idx = self.num_continuous + self.num_discrete
 
-        # Chemins de sauvegarde
+        # Save paths
         self.scaler_path = scaler_path
         self.vocab_path = scaler_path.replace('_scaler.pkl', '_vocab.json')
         self.cat_vocab_path = scaler_path.replace('_scaler.pkl', '_cat_vocab.json')
@@ -63,25 +63,25 @@ class PatientDataset(Dataset):
         self.meta_config = meta_config
         self.fit_stats = fit_stats
 
-        # Chargement des données brutes
+        # Load raw data
         self.raw_data = raw_data
 
-        # Vocabulaires et mappings de permutation
+        # Vocabularies and permutation mappings
         self.meta_vocabs = self._prepare_meta_vocabs()
         self.cat_vocabs = self._prepare_cat_vocabs()
 
-        # Génération des fenêtres
+        # Generate windows
         self.windowed_data = self._generate_windows()
 
-        # Préparation des données (extraction, normalisation)
+        # Prepare data (extraction, normalization)
         self.data_float_list, self.meta_list = self._prepare_data()
 
     # ------------------------------------------------------------------
-    # Méthodes de préparation des vocabulaires
+    # Methods for preparing vocabularies
     # ------------------------------------------------------------------
 
     def _prepare_meta_vocabs(self) -> Dict[str, Dict[str, int]]:
-        """Construit ou charge le vocabulaire des métadonnées catégorielles."""
+        """Build or load the vocabulary of categorical metadata."""
         if not self.meta_config:
             return {}
 
@@ -108,16 +108,16 @@ class PatientDataset(Dataset):
 
     def _prepare_cat_vocabs(self) -> Dict[int, Dict[str, int]]:
         """
-        Construit ou charge :
-        - le vocabulaire des valeurs catégorielles (par colonne)
-        - les mappings de permutation pour les duplicats
-        Retourne uniquement le vocabulaire.
+        Build or load :
+        - the vocabulary of categorical values (by column)
+        - the permutation mappings for duplicates
+        Returns only the vocabulary.
         """
-        # Vocabulaire initial avec token PAD_UNKNOWN (index 99)
+        # Initial vocabulary with token PAD_UNKNOWN (index 99)
         vocabs = {col: {"PAD_UNKNOWN": 99} for col in self.categorical_cols}
 
         if self.fit_stats:
-            # Construction du vocabulaire à partir des données
+            # Build vocabulary from data
             for patient in self.raw_data:
                 seq_raw = np.array(patient["donnees"])
                 for col in self.categorical_cols:
@@ -132,7 +132,7 @@ class PatientDataset(Dataset):
                 json.dump(vocabs, f)
 
             if self.cat_mode == "duplicated":
-                # Construction des mappings de permutation pour le soft-encoding
+                # Build permutation mappings for soft-encoding
                 self.cat_permutations = {}
                 self.cat_inv_permutations = {}
                 
@@ -159,7 +159,7 @@ class PatientDataset(Dataset):
                     }, f)
                 
         else:
-            # Chargement depuis les fichiers existants
+            # Load from existing files
             if os.path.exists(self.cat_vocab_path):
                 with open(self.cat_vocab_path, 'r', encoding='utf-8') as f:
                     vocabs_str = json.load(f)
@@ -189,12 +189,12 @@ class PatientDataset(Dataset):
         return vocabs
 
     # ------------------------------------------------------------------
-    # Découpage en fenêtres
+    # Window splitting
     # ------------------------------------------------------------------
 
     def _generate_windows(self) -> List[Dict]:
         """
-        Génère des fenêtres glissantes adaptées au mode d'entraînement choisi.
+        Generate sliding windows adapted to the chosen training mode.
         """
         if self.mode == "main":
             window_size = self.target_len
@@ -237,13 +237,13 @@ class PatientDataset(Dataset):
         return windowed
 
     # ------------------------------------------------------------------
-    # Extraction et normalisation des données
+    # Data extraction and normalization
     # ------------------------------------------------------------------
 
     def _prepare_data(self) -> Tuple[List[np.ndarray], List[Dict]]:
         """
-        Extrait les features (continues, discrètes, catégorielles), applique la normalisation,
-        et prépare les métadonnées. Retourne la liste des séquences normalisées et la liste des métadonnées.
+        Extract features (continuous, discrete, categorical), apply normalization,
+        and prepare metadata. Returns the list of normalized sequences and the list of metadata.
         """
         all_features_float = []
         all_features_cat_idx = []
@@ -306,14 +306,14 @@ class PatientDataset(Dataset):
         return normalized_list, all_meta
 
     # ------------------------------------------------------------------
-    # Méthodes utilitaires
+    # Utility methods
     # ------------------------------------------------------------------
 
     def _normalize_features(self, all_features: List[np.ndarray]) -> List[np.ndarray]:
         """
-        Normalise les features via QuantileTransformer (normal distribution).
-        Si fit_stats=True, ajuste le transformateur sur un échantillon.
-        Retourne la liste des séquences normalisées.
+        Normalize features via QuantileTransformer (normal distribution).
+        If fit_stats=True, fit the transformer on a sample.
+        Returns the list of normalized sequences.
         """
         if self.cat_mode == "duplicated":
             total_features = self.num_continuous + self.num_discrete + self.num_categorical * self.cat_embed_dim
@@ -323,32 +323,32 @@ class PatientDataset(Dataset):
         if len(all_features) == 0 or total_features == 0:
             return all_features
 
-        # Concaténer toutes les séquences pour l'analyse globale
+        # Concatenate all sequences for global analysis
         flat_all = np.concatenate(all_features, axis=0)
 
-        # Imputation des NaN par la moyenne de chaque colonne
+        # Imputation of NaN by the mean of each column
         col_means = np.nanmean(flat_all, axis=0)
         inds = np.where(np.isnan(flat_all))
         flat_all[inds] = np.take(col_means, inds[1])
 
         if self.fit_stats:
             if self.cat_mode == "duplicated":
-                # En duplicated, les colonnes discrètes et catégorielles (soft-encoded) sont dans le flottant
+                # In the duplicated mode, the discrete and categorical (soft-encoded) columns are in the float part.
                 num_to_jitter = self.num_discrete + self.num_categorical * self.cat_embed_dim
             else:
-                # En embedded, seules les colonnes discrètes sont dans le flottant
+                # In embedded mode, only the discrete columns are in the float part
                 num_to_jitter = self.num_discrete
 
             if num_to_jitter > 0:
                 noise = np.random.uniform(-0.5, 0.5, size=(flat_all.shape[0], num_to_jitter))
                 flat_all[:, self.num_continuous:] += noise
 
-            # Sous-échantillonnage pour l'ajustement du QuantileTransformer
+            # Subsampling for QuantileTransformer fitting
             num_samples = min(len(flat_all), 100000)
             indices = np.random.choice(len(flat_all), num_samples, replace=False)
             sample_for_fit = flat_all[indices]
 
-            # Choix du scaler
+            # Choice of scaler
             if self.normalization == "quantile":
                 self.scaler = QuantileTransformer(output_distribution='normal', n_quantiles=1000)
             elif self.normalization == "standard":
@@ -363,7 +363,7 @@ class PatientDataset(Dataset):
                 unit_variance=False,
             )
             else:
-                raise ValueError(f"Type de normalisation non supporté : {self.normalization}")
+                raise ValueError(f"Normalisation type not supported: {self.normalization}")
             
             self.scaler.fit(sample_for_fit)
 
@@ -374,10 +374,10 @@ class PatientDataset(Dataset):
             with open(self.scaler_path, 'rb') as f:
                 self.scaler = pickle.load(f)
 
-        # Transformer toutes les données
+        # Transform all data
         flat_normalized = self.scaler.transform(flat_all)
 
-        # Redécoupage en séquences individuelles
+        # Resplit into individual sequences
         normalized_list = []
         idx = 0
         for feat in all_features:
@@ -389,8 +389,8 @@ class PatientDataset(Dataset):
 
     def denormalize(self, batch: np.ndarray) -> np.ndarray:
         """
-        Dénormalise un batch de données [B, L, C] ou [L, C].
-        Retourne les données dans l'espace d'origine (les variables discrètes/catégorielles sont arrondies).
+        Denormalize a batch of data [B, L, C] or [L, C].
+        Returns the data in the original space (discrete/categorical variables are rounded).
         """
         
         squeeze = False
@@ -406,23 +406,23 @@ class PatientDataset(Dataset):
         if n_norm == 0:
             res = batch
         else:
-            # Séparation des colonnes
+            # Separation of columns
             if self.cat_mode == "embedded" and batch.shape[-1] > n_norm:
                 float_part = batch[..., :n_norm]
                 cat_part = batch[..., n_norm:]
-                # Dénormalisation de la partie flottante
+                # Denormalization of the float part
                 flat_float = float_part.reshape(-1, n_norm)
                 restored_float = self.scaler.inverse_transform(flat_float).reshape(float_part.shape)
-                # Arrondi des variables discrètes (si présentes)
+                # Rounding of discrete variables (if present)
                 if self.num_discrete > 0:
                     restored_float[..., self.num_continuous:] = np.round(restored_float[..., self.num_continuous:])
-                # Recomposition
+                # Reconstruction
                 res = np.concatenate([restored_float, cat_part], axis=-1)
             else:
-                # Cas standard (duplicated ou embedded sans catégories dans le batch)
+                # Standard case (duplicated or embedded without categories in the batch)
                 flat = batch.reshape(-1, n_norm)
                 restored = self.scaler.inverse_transform(flat).reshape(batch.shape[0], -1, n_norm)
-                # Arrondi pour les variables discrètes et catégorielles (duplicated)
+                # Rounding for discrete and categorical variables (duplicated)
                 num_to_round = self.num_discrete
                 if self.cat_mode == "duplicated":
                     num_to_round += self.num_categorical * self.cat_embed_dim
@@ -436,12 +436,12 @@ class PatientDataset(Dataset):
 
     def aggregate_cat_duplicates(self, data: np.ndarray) -> np.ndarray:
         """
-        Agrège les duplicats catégoriels pour retrouver la valeur la plus probable.
-        data : array dénormalisé [B, L, C_total]
-        Retourne : array [B, L, num_categorical] avec les indices des valeurs originales.
+        Aggregates categorical duplicates to find the most probable value.
+        data : denormalized array [B, L, C_total]
+        Returns : array [B, L, num_categorical] with indices of original values.
         """
         if self.cat_mode != "duplicated":
-            raise ValueError("aggregate_cat_duplicates : Cette méthode ne s'applique qu'en mode 'duplicated'.")
+            raise ValueError("aggregate_cat_duplicates : This method only applies in 'duplicated' mode.")
                 
         B, L, _ = data.shape
         out = np.zeros((B, L, self.num_categorical), dtype=np.int64)
@@ -454,9 +454,9 @@ class PatientDataset(Dataset):
                         idx = self.cat_map_start_idx + i * self.cat_embed_dim + d
                         val = data[b, t, idx]
                         rounded_val = int(np.round(val))
-                        weight = 1.0 - 2.0 * abs(val - rounded_val)  # poids selon proximité
+                        weight = 1.0 - 2.0 * abs(val - rounded_val)  # weight according to proximity
 
-                        # Récupérer le code original via le mapping inverse
+                        # Retrieve the original code via the inverse mapping
                         code = self.cat_inv_permutations[col][d].get(rounded_val, 0)
                         code_scores[code] = code_scores.get(code, 0.0) + weight
 
@@ -465,7 +465,7 @@ class PatientDataset(Dataset):
         return out
 
     # ------------------------------------------------------------------
-    # Méthodes du Dataset PyTorch
+    # PyTorch Dataset methods
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
@@ -473,13 +473,13 @@ class PatientDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         """
-        Retourne les segments requis selon le mode d'entraînement choisi.
+        Returns the required segments according to the chosen training mode.
         """
         float_seq = self.data_float_list[idx]
         cat_seq = self.data_cat_idx_list[idx]
         raw_window = self.windowed_data[idx]["donnees"]
 
-        # Mode conditionné par les événements
+        # Conditioned by events
         event_idx_col = self.event_code_index[0] if self.event_code_index is not None and len(self.event_code_index) > 0 else None
         
         if self.mode == "main":
@@ -495,7 +495,7 @@ class PatientDataset(Dataset):
             hist_cat, x_cat_t = cat_seq[:self.hist_len], cat_seq[self.hist_len:]
             event_seq = raw_window[self.hist_len:, event_idx_col].astype(np.int64) if event_idx_col is not None else np.zeros(self.target_len, dtype=np.int64)
 
-        # Métadonnées en tenseurs
+        # Metadata as tensors
         meta_tensors = {}
         for k, v in self.meta_list[idx].items():
             dtype = torch.float32 if isinstance(v, float) else torch.long
@@ -512,19 +512,19 @@ class PatientDataset(Dataset):
 
 
 # ------------------------------------------------------------------
-# Fonctions utilitaires hors classe
+# Utility functions outside class
 # ------------------------------------------------------------------
 
 def collate_fn(batch: List[Tuple]) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
     """
-    Regroupe un batch d'échantillons en les padant sur la longueur.
-    Retourne : (x_float [B, C, L], hist_float [B, C, L_hist], meta {key: [B]})
+    Groups a batch of samples by padding them on length.
+    Returns : (x_float [B, C, L], hist_float [B, C, L_hist], meta {key: [B]})
     """
     x_floats, hist_floats, metas, x_cats, hist_cats, event_seqs = zip(*batch)
 
     max_len = max(x.shape[0] for x in x_floats)
 
-    # Padding de x_float avec la dernière valeur
+    # Padding of x_float with the last value
     padded_x = []
     for x_f in x_floats:
         curr_len = x_f.shape[0]
@@ -550,8 +550,8 @@ def collate_fn(batch: List[Tuple]) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
 
 def compute_latent_scale(vae, dataloader, device, save_path, is_history=False, max_batches: Optional[int] = 50):
     """
-    Calcule l'échelle du latent (1 / quantile 95% de ||mu||) pour stabiliser l'apprentissage.
-    Sauvegarde la valeur dans un fichier numpy.
+    Calculates the latent scale (1 / 95th percentile of ||mu||) to stabilize learning.
+    Saves the value in a numpy file.
     """
     vae.eval()
     all_mu = []

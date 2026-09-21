@@ -6,10 +6,7 @@ from typing import Tuple, Optional, List, Any, Union
 
 class SWDLoss(nn.Module):
     """
-    Spectral Wasserstein Distance Loss optimisée.
-    Utilise des projections pré-calculées stockées dans un buffer pour éviter les
-    allocations GPU répétitives.
-    Format attendu : [Batch, Channels, Length]
+    Spectral Wasserstein Distance Loss.
     """
     def __init__(self, num_channels: int, num_projections: int = 128, temporal_group: int = 8, p: int = 2):
         super().__init__()
@@ -17,7 +14,7 @@ class SWDLoss(nn.Module):
         self.temporal_group = temporal_group
         self.p = p
         
-        # Pré-génération des projections aléatoires unitaires
+        # Pre-generation of randomly unitary projections
         projections = torch.randn(num_channels, num_projections)
         projections = projections / torch.norm(projections, dim=0, keepdim=True)
         self.register_buffer('projections', projections)
@@ -29,25 +26,25 @@ class SWDLoss(nn.Module):
             
         G = min(self.temporal_group, T)
         
-        # Tronquage pour fenêtrage régulier
+        # Truncate for regular windowing
         T_trim = (T // G) * G
         if T_trim < T:
             x = x[..., :T_trim]
             y = y[..., :T_trim]
         
-        # Découpage en fenêtres [Batch * Nb_Fenêtres, Channels, Taille_Fenêtre]
+        # Split into windows
         x_windows = x.view(B, C, -1, G).permute(0, 2, 1, 3).reshape(-1, C, G)
         y_windows = y.view(B, C, -1, G).permute(0, 2, 1, 3).reshape(-1, C, G)
         
-        # Projection : [Total_Windows, Taille_Fenêtre, Num_Projections]
+        # Projection
         x_proj = torch.matmul(x_windows.transpose(1, 2), self.projections)
         y_proj = torch.matmul(y_windows.transpose(1, 2), self.projections)
         
-        # Tri sur la dimension temporelle pour le calcul de la distance de Wasserstein 1D
+        # Sort along temporal dimension for 1D Wasserstein distance calculation
         x_sorted, _ = torch.sort(x_proj, dim=1)
         y_sorted, _ = torch.sort(y_proj, dim=1)
         
-        # Distance Lp moyenne
+        # Average distance
         loss = torch.pow(torch.abs(x_sorted - y_sorted), self.p).mean()
         
         return torch.pow(loss, 1.0/self.p) if self.p > 1 else loss
@@ -68,7 +65,7 @@ def evaluate_generation_swd(
     max_batches: int = 1
 ) -> float:
     """
-    Évaluation de la qualité de génération via SWD.
+    Evaluation of generation quality via SWD.
     """
     model.eval()
     all_swd = []
@@ -89,7 +86,7 @@ def evaluate_generation_swd(
  
             b = real_vitals_float.shape[0]
             
-            # Encodage de l'historique
+            # Encode history
             mu_hist, _ = vae_hist.encode(history_feat_float)
             z_hist = mu_hist * hist_latent_scale
 
@@ -98,7 +95,7 @@ def evaluate_generation_swd(
                 real_vitals_denorm = dataset.denormalize(real_vitals_float.cpu().numpy())
                 cond_idx = torch.tensor(dataset.aggregate_cat_events(real_vitals_denorm)[..., 0]).to(device)
 
-            # Génération
+            # Generation
             x_0_gen = noise_scheduler.sample(
                 model_wrapper=model,
                 shape=(b, *latent_shape),
@@ -109,10 +106,10 @@ def evaluate_generation_swd(
                 meta_dict=meta_dict
             )
             
-            # Décodage
+            # Decode
             recon_out = vae.decode(x_0_gen)
             
-            # Reconstitution d'un tenseur de flottants pour le SWD
+            # Reconstitution of a float tensor for SWD
             if recon_out is not None:
                 swd = swd_criterion(recon_out, real_vitals_float)
                 all_swd.append(swd.item())
@@ -121,7 +118,7 @@ def evaluate_generation_swd(
 
 class PIDControl:
     """
-    Contrôleur PID pour stabiliser la perte KLD.
+    PID controller to stabilize the KLD loss.
     """
     def __init__(self, target: float, kp: float = 1e-5, ki: float = 1e-6, max_weight: float = 0.0001, min_weight: float = 1e-7, start_weight: float = 1e-7):
         self.target = target
@@ -143,7 +140,7 @@ class PIDControl:
     
 class HybridVAELoss(nn.Module):
     """
-    Module calculant la perte hybride du VAE.
+    Calculate the loss of the VAE.
     """
     def __init__(self, spectral_weight: float = 0.1, cce_weight: float = 0.1, kld_weight: float = 0.1):
         super().__init__()
@@ -163,27 +160,27 @@ class HybridVAELoss(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
         
-        # MSE sur les variables flottantes
+        # MSE for floats variables
         MSE = F.mse_loss(recon_float, target_float, reduction='mean') if recon_float is not None else torch.tensor(0.0, device=mu.device)
         
-        # Loss Catégorielle (CrossEntropy) si mode embedded
+        # CCE (CrossEntropy for categorical variables)
         CCE = torch.tensor(0.0, device=mu.device)
         if recon_cat_logits is not None and target_cat is not None:
             for i, logits in enumerate(recon_cat_logits):
                 # logits: [B, Num_Classes, L], target: [B, L]
                 CCE += F.cross_entropy(logits, target_cat[:, i, :])
 
-        # Régularisation (KLD)
+        # Regularization (KLD)
         KLD = -0.5 * torch.mean(torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=[1, 2]))
         
-        # 3. Cohérence Fréquentielle (SPEC sur tous les canaux)
+        # Frequency Coherence
         SPEC = torch.tensor(0.0, device=mu.device)
         if recon_float is not None:
             recon_fft = torch.fft.rfft(recon_float, dim=-1)
             target_fft = torch.fft.rfft(target_float, dim=-1)
             SPEC = F.l1_loss(torch.abs(recon_fft), torch.abs(target_fft), reduction='mean')
             
-        # 4. Agrégation
+        # Aggregation
         total_loss = (
             MSE + 
             (self.cce_weight * CCE) + 
@@ -195,16 +192,16 @@ class HybridVAELoss(nn.Module):
 
 class FlowMatchingLoss(nn.Module):
     """
-    Perte pour le Flow Matching avec similarité cosinus.
+    Loss for Flow Matching with cosine similarity.
     """
     def __init__(self):
         super(FlowMatchingLoss, self).__init__()
         
     def forward(self, v_pred, v_target):
-        # Perte sur la mse
+        # Loss on mse
         MSE = F.smooth_l1_loss(v_pred, v_target)
         
-        # Similarité de direction
+        # Direction similarity
         COS = 1 - F.cosine_similarity(v_pred, v_target, dim=-1).mean()
         
         return MSE, COS
@@ -216,7 +213,7 @@ class AutomaticWeightedLoss(nn.Module):
 
     def forward(self, losses):
         """
-        Pondération des loss par incertitude homoscédastique
+        Weighting of losses by homoscedastic uncertainty
         """
         weighted_losses = []
         for i, loss in enumerate(losses):

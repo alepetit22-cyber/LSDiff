@@ -7,8 +7,7 @@ import math
 
 class SinusoidalTimeEmbedding(nn.Module):
     """
-    Embedding temporel sinusoidal pour le modèle de diffusion.
-    Inclut un MLP et un scaling par 2*pi pour de meilleures performances.
+    Sinusoidal temporal embedding for the diffusion model.
     """
     def __init__(self, embed_dim: int, max_period: int = 10000):
         super().__init__()
@@ -37,11 +36,11 @@ class SinusoidalTimeEmbedding(nn.Module):
 
 class RoPE(nn.Module):
     """
-    Rotary Positional Embeddings (RoPE) optimisé avec cache.
+    Rotary Positional Embeddings (RoPE).
     """
     def __init__(self, head_dim: int, max_len: int = 128):
         super().__init__()
-        assert head_dim % 2 == 0, "head_dim doit être pair pour RoPE"
+        assert head_dim % 2 == 0, "head_dim must be even for RoPE"
         self.head_dim = head_dim
         
         # Précalcul des fréquences
@@ -49,7 +48,7 @@ class RoPE(nn.Module):
         t = torch.arange(max_len).float()
         freqs = torch.outer(t, inv_freq)
         
-        # On stocke sin et cos
+        # Store cos and sin
         self.register_buffer('cos', freqs.cos()) # [max_len, head_dim/2]
         self.register_buffer('sin', freqs.sin()) # [max_len, head_dim/2]
 
@@ -68,7 +67,7 @@ class RoPE(nn.Module):
     
 class DiTBlock(nn.Module):
     """
-    Bloc Diffusion Transformer (DiT) avec AdaLN-Zero et FlashAttention.
+    Bloc Diffusion Transformer (DiT) with AdaLN-Zero and FlashAttention.
     """
     def __init__(self, embed_dim: int, num_heads: int, ff_mult: int = 4, dropout: float = 0.1):
         super().__init__()
@@ -102,17 +101,17 @@ class DiTBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor, context: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # 1. AdaLN Modulation
+        # AdaLN Modulation
         mod = self.adaLN_modulation(t_emb).chunk(6, dim=-1)
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mod
         
-        # 2. Self-Attention
+        # Self-Attention
         h = self.norm1(x) * (1 + scale_msa[:, None, :]) + shift_msa[:, None, :]
         b, l, d = h.shape
         qkv = self.qkv(h) # [B, L, 3 * D]
-        q, k, v = qkv.chunk(3, dim=-1) # Sépare en 3 tenseurs [B, L, D]
+        q, k, v = qkv.chunk(3, dim=-1) # Separate into 3 tensors [B, L, D]
         
-        # Redimensionnement
+        # Reshape
         q = q.view(b, l, self.num_heads, self.head_dim).transpose(1, 2).contiguous() # [B, H, L, D]
         k = k.view(b, l, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
         v = v.view(b, l, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -126,12 +125,11 @@ class DiTBlock(nn.Module):
         attn_out = attn_out.transpose(1, 2).contiguous().view(b, l, d)
         x = x + gate_msa[:, None, :] * self.proj_self(attn_out)
 
-        # 3. Cross-Attention
+        # Cross-Attention
         if context is not None:
             h = self.norm2(x)
             q_cross = self.cross_attn_q(h).view(b, l, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
             
-            # Même logique pour K et V du contexte
             kv_cross = self.cross_attn_kv(context) # [B, L_ctx, 2 * D]
             k_cross, v_cross = kv_cross.chunk(2, dim=-1)
             
@@ -142,7 +140,7 @@ class DiTBlock(nn.Module):
             cross_out = cross_out.transpose(1, 2).contiguous().view(b, l, d)
             x = x + self.proj_cross(cross_out)            
             
-        # 4. FeedForward
+        # FeedForward
         h = self.norm3(x) * (1 + scale_mlp[:, None, :]) + shift_mlp[:, None, :]
         x = x + gate_mlp[:, None, :] * self.mlp(h)
         

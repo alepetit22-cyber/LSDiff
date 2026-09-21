@@ -6,7 +6,7 @@ from transformer_block import SinusoidalTimeEmbedding, DiTBlock
 
 class CFGWrapper(nn.Module):
     """
-    Enveloppe le modèle de diffusion pour gérer le Classifier-Free Guidance.
+    Wraps the diffusion model to handle Classifier-Free Guidance.
     """
     def __init__(self, model: 'DiffusionEngine', cfg_scale: float = 2.5):
         super().__init__()
@@ -15,38 +15,37 @@ class CFGWrapper(nn.Module):
 
     def forward(self, x_t: torch.Tensor, t: torch.Tensor, force_uncond: bool = False, **cond_kwargs) -> torch.Tensor:
         if force_uncond or self.cfg_scale <= 1.0:
-            # On ne passe à None QUE la condition liée aux événements, on garde l'historique !
             kwargs_uncond = cond_kwargs.copy()
             kwargs_uncond['force_uncond_event'] = torch.ones(x_t.shape[0], dtype=torch.bool, device=x_t.device)
             return self.model(x_t, t, **kwargs_uncond)
 
-        # Duplication du batch pour CFG
+        # Batch duplication for CFG
         x_in = torch.cat([x_t, x_t], dim=0)
         t_in = torch.cat([t, t], dim=0)
         
-        # Duplication des conditionnements
+        # Duplication of conditions
         cond_combined = {}
         for k, v in cond_kwargs.items():
             if v is None:
                 cond_combined[k] = None
             elif isinstance(v, dict):
-                # Dupliquer les tenseurs si dictionnaire
+                # Duplicate tensors if dictionary
                 cond_combined[k] = {key: torch.cat([val, val], dim=0) for key, val in v.items()}
             elif isinstance(v, torch.Tensor):
-                # Tenseurs classiques (z_hist, cond_idx)
+                # Classic tensors (z_hist, cond_idx)
                 cond_combined[k] = torch.cat([v, v], dim=0)
             else:
-                # Sécurité pour les booléens, ints, floats qui ne se concatènent pas
+                # Safety for booleans, ints, floats that don't concatenate
                 cond_combined[k] = v
                 
-        # Masques de dropout pour la partie inconditionnelle
+        # Dropout masks for the unconditional part
         b = x_t.shape[0]
         drop_mask = torch.cat([
             torch.zeros(b, dtype=torch.bool, device=x_t.device),
             torch.ones(b, dtype=torch.bool, device=x_t.device)
         ], dim=0)
         
-        # Passe forward : On utilise preconditioned_forward pour avoir x_0
+        # Forward pass: Using preconditioned_forward to get x_0
         model_to_call = self.model
         if not hasattr(model_to_call, 'preconditioned_forward') and hasattr(model_to_call, 'module'):
             model_to_call = model_to_call.module
@@ -61,10 +60,10 @@ class CFGWrapper(nn.Module):
         
         x_0_cond, x_0_uncond = torch.chunk(x_0_out, 2, dim=0)
         
-        # CFG sur x_0
+        # CFG on x_0
         x_0_pred = x_0_uncond + self.cfg_scale * (x_0_cond - x_0_uncond)
         
-        # Re-calcul du vecteur vitesse final
+        # Re-calculate the final velocity vector
         current_t = t.view(-1, 1, 1).clamp(min=1e-5)
         v_final = (x_t - x_0_pred) / current_t
         
@@ -72,7 +71,7 @@ class CFGWrapper(nn.Module):
 
 class MetaEncoder(nn.Module):
     """
-    Encodeur pour les métadonnées hétérogènes.
+    Encoder for heterogeneous metadata.
     """
     def __init__(self, meta_config: Optional[List[Dict]], embed_dim: int):
         super().__init__()
@@ -119,28 +118,31 @@ class Transpose(nn.Module):
         return x.transpose(self.dim1, self.dim2)
 
 class DiffusionEngine(nn.Module):
+    """
+    Diffusion engine for latent space generation.
+    """
     def __init__(self, config: Any):
         super().__init__()
         self.embed_dim = config.embed_dim
         self.latent_channel = config.latent_channel
         self.has_event = getattr(config, 'has_event', False)
 
-        # Projections Entrée/Sortie
+        # Input/Output Projections
         self.input_proj = nn.Conv1d(config.latent_channel, config.embed_dim, kernel_size=1)
         self.output_proj = nn.Conv1d(config.embed_dim, config.latent_channel, kernel_size=1)
         
-        # Embedding Temporel
+        # Temporal Embedding
         self.time_embed = SinusoidalTimeEmbedding(config.embed_dim)
         
-        # Métadonnées
+        # Metadata
         self.meta_encoder = MetaEncoder(config.meta_config, config.embed_dim)
         self.meta_null_token = nn.Parameter(torch.randn(1, config.embed_dim))
         
-        # Historique
+        # History
         self.hist_proj = nn.Conv1d(config.latent_channel_hist, config.embed_dim, kernel_size=1)
         self.hist_null_token = nn.Parameter(torch.randn(1, config.embed_dim, 1))
         
-        # Conditionnement par évènements
+        # Conditionning by events
         if self.has_event:
             self.class_emb = nn.Embedding(config.num_classes, config.embed_dim)
             self.perceiver_cross_attn = nn.MultiheadAttention(
@@ -160,17 +162,17 @@ class DiffusionEngine(nn.Module):
             for _ in range(config.num_layers)
         ])
         
-        # Positional Encoding (Séquence latente)
+        # Positional Encoding
         self.pos_enc = nn.Parameter(torch.randn(1, config.embed_dim, config.latent_seq_len))
 
     def preconditioned_forward(self, x_t, t, **cond_kwargs):
         """
-        Prédit x_0 pour stabiliser les extrêmes.
+        Predict x_0 to stabilize extremes.
         """
-        # Le réseau prédit la vitesse (v)
+        # The network predicts the velocity (v)
         v_pred = self.forward(x_t, t, **cond_kwargs)
         
-        # Récupération de x_0
+        # Retrieval of x_0
         x_0_pred = x_t - t.view(-1, 1, 1) * v_pred
         
         return x_0_pred, v_pred
@@ -191,7 +193,7 @@ class DiffusionEngine(nn.Module):
         # 1. Input Projection
         h = self.input_proj(x) + self.pos_enc
         
-        # 2. Conditionnement Global (Time + Meta)
+        # 2. Global conditionning (Time + Meta)
         t_emb = self.time_embed(t)
         meta_emb = self.meta_encoder(meta_dict)
         
@@ -205,8 +207,8 @@ class DiffusionEngine(nn.Module):
         
         global_cond = t_emb + meta_emb
         
-        # 3. Conditionnement Séquentiel (Hist + Events)
-        # Historique
+        # 3. Sequential conditionning (Hist + Events)
+        # History
         if z_hist is not None:
             hist_ctx = self.hist_proj(z_hist)
             if drop_hist is not None:
@@ -215,7 +217,7 @@ class DiffusionEngine(nn.Module):
         else:
             hist_ctx = None
             
-        # Évènements
+        # Events
         event_ctx = None
         if self.has_event and cond_seq is not None:
             e = self.class_emb(cond_seq) # [B, L_orig, D]
@@ -226,14 +228,14 @@ class DiffusionEngine(nn.Module):
             event_ctx = event_ctx.transpose(1, 2).contiguous() # [B, D, L_lat]
             
             if force_uncond_event is not None:
-                # Token nul d'événement
+                # Null event token
                 event_ctx = torch.where(
                     force_uncond_event.view(-1, 1, 1),
                     torch.zeros_like(event_ctx),
                     event_ctx
                 )
         
-        # Fusion du contexte séquentiel
+        # Fusion of sequential context
         if hist_ctx is not None and event_ctx is not None:
             context = torch.cat([hist_ctx, event_ctx], dim=2)
         elif hist_ctx is not None:
@@ -247,17 +249,18 @@ class DiffusionEngine(nn.Module):
         if context is not None:
             context = context.transpose(1, 2).contiguous()
             
-        # 4. DiT Blocks
-        # x for DiTBlock should be [B, L, D]
         h = h.transpose(1, 2).contiguous()
         for block in self.blocks:
             h = block(h, global_cond, context)
         
-        # 5. Output Projection
+        # Output Projection
         h = h.transpose(1, 2).contiguous()
         return self.output_proj(h)
 
 class FlowMatchingScheduler:
+    """
+    Flow Matching Scheduler for diffusion models.
+    """
     def __init__(self, num_inference_steps: int = 15):
         self.num_inference_steps = num_inference_steps
         
@@ -277,20 +280,20 @@ class FlowMatchingScheduler:
     def sample(self, model_wrapper, shape, device,
            latent_scale=None, **cond_kwargs):
         """
-        Solveur Adams-Bashforth ordre 3 non-uniforme avec amorçage Heun.
+        Solver Adams-Bashforth order 3 non-uniform with Heun initialization.
 
-        Schedule cosinus conservé (pas non-uniformes).
-        - Étapes 0-1 : Heun (ordre 2) pour constituer l'historique
-        - Étapes 2+  : AB3 avec coefficients adaptés aux dt variables
+        Cosine schedule preserved (non-uniform steps).
+        - Steps 0-1 : Heun (order 2) to build history
+        - Steps 2+  : AB3 with coefficients adapted to variable dt
         """
         x_t = torch.randn(shape, device=device)
 
-        # t[0] ≈ 1.0 (bruit pur) → t[-1] ≈ 0.0 (signal pur)
+        # t[0] ≈ 1.0 (noise) → t[-1] ≈ 0.0 (signal)
         timesteps = torch.cos(
             torch.linspace(0, torch.pi / 2, self.num_inference_steps + 1, device=device)
         )
 
-        # Historique circulaire : [v_{i-1}, v_{i-2}] et [dt_{i-1}, dt_{i-2}]
+        # Circular history: [v_{i-1}, v_{i-2}] and [dt_{i-1}, dt_{i-2}]
         v_hist  = []   # max 2 tenseurs (les deux vitesses passées)
         dt_hist = []   # max 2 scalaires float
 
@@ -302,24 +305,24 @@ class FlowMatchingScheduler:
             v_cur = model_wrapper(x_t, t_in, **cond_kwargs)
 
             if i < 2:
-                # Amorçage Heun (ordre 2)
+                # Heun initialization (order 2)
                 x_pred = x_t - v_cur * dt
                 t_next = timesteps[i + 1].expand(shape[0], 1)
                 v_next = model_wrapper(x_pred, t_next, **cond_kwargs)
                 x_t = x_t - 0.5 * (v_cur + v_next) * dt
 
             else:
-                # AB3 non-uniforme
-                h0 = dt           # pas courant        (i   → i+1)
-                h1 = dt_hist[-1]  # pas précédent      (i-1 → i)
-                h2 = dt_hist[-2]  # pas ante-précédent (i-2 → i-1)
+                # AB3 non-uniform
+                h0 = dt           # current step size        (i   → i+1)
+                h1 = dt_hist[-1]  # previous step size      (i-1 → i)
+                h2 = dt_hist[-2]  # anteprevious step size (i-2 → i-1)
 
-                v0 = v_cur        # vitesse en t_i
-                v1 = v_hist[-1]   # vitesse en t_{i-1}
-                v2 = v_hist[-2]   # vitesse en t_{i-2}
+                v0 = v_cur        # velocity at t_i
+                v1 = v_hist[-1]   # velocity at t_{i-1}
+                v2 = v_hist[-2]   # velocity at t_{i-2}
 
-                # Coefficients issus de l'intégration du polynôme de Newton-Gregory
-                # Dégénèrent vers (23/12, -16/12, 5/12)·h quand h0=h1=h2=h
+                # Coefficients derived from the integration of the Newton-Gregory polynomial
+                # They converge to (23/12, -16/12, 5/12)·h when h0=h1=h2=h
                 c0 = (h0
                     + h0**2 / (2.0 * h1)
                     + h0**2 * (2.0*h1 + 3.0*h2) / (6.0 * h1 * (h1 + h2)))
@@ -331,7 +334,7 @@ class FlowMatchingScheduler:
 
                 x_t = x_t - (c0 * v0 + c1 * v1 + c2 * v2)
 
-            # Mise à jour de l'historique (fenêtre glissante de taille 2)
+            # Update history (sliding window of size 2)
             v_hist.append(v_cur)
             dt_hist.append(dt)
             if len(v_hist)  > 2: v_hist.pop(0)

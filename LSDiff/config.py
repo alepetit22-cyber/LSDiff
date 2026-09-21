@@ -75,8 +75,8 @@ class DatasetConfig(BaseModel):
     @property
     def num_effective_float_channels(self) -> int:
         """
-        Calcul du nombre total de canaux après la transformation 
-        [continus + discrets + (catégoriels * duplication)]
+        Calcul of the total number of channels after transformation
+        [continus + discrets + (categoriels * duplication)]
         """
         if self.cat_mode == "duplicated":
             return self.num_continuous + self.num_discrete + (self.num_categorical * self.cat_embed_dim)
@@ -109,13 +109,13 @@ class AutoencoderConfig(BaseModel):
     @field_validator('stride')
     @classmethod
     def stride_must_be_power_of_two(cls, v):
-        assert v in (2, 4, 8), f"stride={v} invalide"
+        assert v in (2, 4, 8), f"stride={v} invalid"
         return v
 
     @model_validator(mode='after')
     def seq_len_divisible_by_stride(self):
         assert self.seq_len % (self.stride ** 2) == 0, \
-            f"seq_len={self.seq_len} doit être divisible par stride²={self.stride**2}"
+            f"seq_len={self.seq_len} should be divisible by stride²={self.stride**2}"
         return self
 
 class HistoryAutoencoderConfig(BaseModel):
@@ -143,13 +143,13 @@ class HistoryAutoencoderConfig(BaseModel):
     @field_validator('stride')
     @classmethod
     def stride_must_be_power_of_two(cls, v):
-        assert v in (2, 4, 8), f"stride={v} invalide"
+        assert v in (2, 4, 8), f"stride={v} invalid"
         return v
 
     @model_validator(mode='after')
     def seq_len_divisible_by_stride(self):
         assert self.seq_len % (self.stride ** 2) == 0, \
-            f"seq_len={self.seq_len} doit être divisible par stride²={self.stride**2}"
+            f"seq_len={self.seq_len} should be divisible by stride²={self.stride**2}"
         return self
 
 class DiffusionConfig(BaseModel):
@@ -220,7 +220,6 @@ def load_config(path: Optional[str] = None) -> 'AppConfig':
     if path is None:
         path = os.environ.get("CONFIG_PATH", "config.yaml")
     if not os.path.exists(path):
-        # tentative dans le dossier parent
         parent = os.path.join("..", path)
         if os.path.exists(parent):
             path = parent
@@ -237,9 +236,8 @@ def load_config(path: Optional[str] = None) -> 'AppConfig':
         inference=InferenceConfig(**data.get('inference', {}))
     )
 
-# Remplacer l'appel existant par :
 try:
     config = load_config()
 except Exception as e:
-    print(f"Erreur de chargement : {e}")
+    print(f"Error loading configuration: {e}")
     config = None

@@ -14,11 +14,11 @@ from imblearn.metrics import geometric_mean_score
 class DatasetEvaluator:
     def __init__(self, real_data, gen_data, col_names, path_dir="checkpoints/"):
         """
-        Initialise l'évaluateur.
-        :param real_data: np.array contenant les données réelles (2D ou 3D).
-        :param gen_data: np.array contenant les données générées (2D ou 3D).
-        :param col_names: liste des noms de colonnes dans l'ordre.
-        :param path_dir: dossier de sauvegarde.
+        Initialize the evaluator.
+        :param real_data: np.array containing the real data (2D or 3D).
+        :param gen_data: np.array containing the generated data (2D or 3D).
+        :param col_names: list of column names in order.
+        :param path_dir: save directory.
         """
         self.real_data = real_data
         self.gen_data = gen_data
@@ -35,14 +35,14 @@ class DatasetEvaluator:
 
     def _write_and_print(self, text, file):
         """
-        Écrit dans le fichier et dans la console.
+        Write to file and console.
         """
         print(text)
         file.write(text + "\n")
 
     def _get_column_vector(self, data, idx):
         """
-        Extrait une variable sous forme de vecteur 1D (2D ou 3D).
+        Extract a variable as a 1D vector (2D or 3D).
         """
         if self.is_3d:
             return data[:, :, idx].flatten()
@@ -51,7 +51,7 @@ class DatasetEvaluator:
 
     def _calculate_mmd(self, x, y, gamma=1.0):
         """
-        Calcule une approximation de la Maximum Mean Discrepancy (MMD).
+        Calculate an approximation of the Maximum Mean Discrepancy (MMD).
         """
         if len(x) > 5000:
             idx = np.random.choice(len(x), 5000, replace=False)
@@ -64,7 +64,7 @@ class DatasetEvaluator:
 
     def _calculate_multiclass_auc_pr(self, y_true, y_pred_labels, classes):
         """
-        Calcule l'AUC-PR macro en encodant One-vs-Rest et en ignorant les classes vides.
+        Calculate the macro AUC-PR by encoding One-vs-Rest and ignoring empty classes.
         """
         if len(classes) <= 1:
             return 0.0
@@ -88,7 +88,7 @@ class DatasetEvaluator:
 
     def _calculate_fsg(self, real_events, gen_events, classes_eval, weights=None, epsilon=1e-6):
         """
-        Calcule le FSG (F-score, Weighted Geometric Mean).
+        Calculate the FSG (F-score, Weighted Geometric Mean).
         """
         if len(classes_eval) == 0:
             return 0.0
@@ -118,7 +118,7 @@ class DatasetEvaluator:
         return float(np.exp(log_fsg))
     def _calculate_discrete_multiclass_auc_roc(self, real_events, gen_events, classes_eval):
             """
-            Calcule l'AUC-ROC macro et pondérée One-vs-Rest sur des labels catégoriels discrets.
+            Calculate the macro and weighted AUC-ROC One-vs-Rest on discrete categorical labels.
             """
             if len(classes_eval) <= 1:
                 return 0.0, 0.0
@@ -150,11 +150,11 @@ class DatasetEvaluator:
 
     def evaluate_continuous_variables(self, file=None):
         """
-        Calcule l'ensemble des métriques de régression et distributionnelles.
-        Retourne :
-          - "by_variable" : dict {nom_variable: {metrique: valeur}}
-          - "records"     : list de dicts prête pour être convertie en pd.DataFrame
-          - "global"      : dict des moyennes globales (avec correction de la coquille smape)
+        Calculate all regression and distributional metrics.
+        Returns:
+          - "by_variable" : dict {variable_name: {metric: value}}
+          - "records"     : list of dicts ready to be converted to pd.DataFrame
+          - "global"      : dict of global averages (with correction for the smape typo)
         """
         if file:
             self._write_and_print("=== ÉVALUATION DES VARIABLES CONTINUES ===\n", file)
@@ -176,14 +176,14 @@ class DatasetEvaluator:
             real_col = self._get_column_vector(self.real_data, idx)
             gen_col = self._get_column_vector(self.gen_data, idx)
 
-            # 1. Métriques point à point
+            # Point-to-point metrics
             mse = float(mean_squared_error(real_col, gen_col))
             mae = float(mean_absolute_error(real_col, gen_col))
             mape = float(np.mean(np.abs((real_col - gen_col) / (np.abs(real_col) + epsilon))) * 100)
             smape = float(np.mean(2 * np.abs(gen_col - real_col) / (np.abs(real_col) + np.abs(gen_col) + epsilon)) * 100)
             r2 = float(r2_score(real_col, gen_col))
 
-            # 2. Histogrammes et lissage additif (pour éviter p=0 ou grid=0 menant à inf sur la KL)
+            # Histograms and additive smoothing (to avoid p=0 or grid=0 leading to inf on KL)
             bins = np.histogram_bin_edges(np.concatenate([real_col, gen_col]), bins=50)
             p, _ = np.histogram(real_col, bins=bins, density=False)
             grid, _ = np.histogram(gen_col, bins=bins, density=False)
@@ -195,7 +195,7 @@ class DatasetEvaluator:
             kl_div = float(entropy(p, grid))
             mmd = float(self._calculate_mmd(real_col, gen_col))
 
-            # 3. Stockage des métriques de la variable
+            # Store metrics for the variable
             metrics_dict = {
                 "MSE": mse,
                 "MAE": mae,
@@ -230,7 +230,7 @@ class DatasetEvaluator:
             "mse_glob": mse_cum / n_vars,
             "mae_glob": mae_cum / n_vars,
             "mape_glob": mape_cum / n_vars,
-            "smape_glob": smape_cum / n_vars,  # Coquille 'smpae_glob' corrigée
+            "smape_glob": smape_cum / n_vars,
             "r2_glob": r2_cum / n_vars,
             "js_glob": js_dist_cum / n_vars,
             "kl_glob": kl_div_cum / n_vars,
@@ -245,11 +245,11 @@ class DatasetEvaluator:
 
     def evaluate_categorical_event(self, file=None):
         """
-        Calcule les métriques avancées pour la variable catégorielle (event_code)
-        et retourne un dictionnaire structuré des résultats.
+        Calculate metrics for the categorical variable (event_code)
+        and return a structured dictionary of results.
         """
         if file:
-            self._write_and_print("\n=== ÉVALUATION DE LA VARIABLE CATÉGORIELLE (event_code) ===\n", file)
+            self._write_and_print("\n=== CATEGORICAL VARIABLE EVALUATION (event_code) ===\n", file)
         
         real_events = self._get_column_vector(self.real_data, self.event_idx).astype(int)
         gen_events = self._get_column_vector(self.gen_data, self.event_idx).astype(int)
@@ -281,24 +281,23 @@ class DatasetEvaluator:
         auc_pr_macro = float(self._calculate_multiclass_auc_pr(real_events, gen_events, classes))
 
         if file:
-            self._write_and_print(f"Classe majoritaire identifiée                : {major_class} (Présente {major_count}/{len(real_events)})", file)
-            self._write_and_print(f"Accuracy Globale                             : {accuracy_globale:.4f}", file)
-            self._write_and_print(f"Accuracy Hors Classe Majoritaire             : {accuracy_minoritaire:.4f}", file)
-            self._write_and_print(f"F1-Score Arithmétique (Macro Global)         : {macro_f1_arith:.4f}", file)
-            self._write_and_print(f"F1-Score Arithmétique (Pondéré)              : {weighted_f1:.4f}", file)
-            self._write_and_print(f"F1-Score géométrique (Macro Global)          : {fsg_macro:.4f}", file)
-            self._write_and_print(f"F1-Score géométrique (Pondéré)               : {fsg_weighted:.4f}", file)
+            self._write_and_print(f"Identified majority class                    : {major_class} (Present {major_count}/{len(real_events)})", file)
+            self._write_and_print(f"Global accuracy                              : {accuracy_globale:.4f}", file)
+            self._write_and_print(f"Accuracy (excluding majority class)          : {accuracy_minoritaire:.4f}", file)
+            self._write_and_print(f"F1-Score (Arithmetic, Macro)                 : {macro_f1_arith:.4f}", file)
+            self._write_and_print(f"F1-Score (Arithmetic, Weighted)              : {weighted_f1:.4f}", file)
+            self._write_and_print(f"F1-Score (Geometric, Macro)                  : {fsg_macro:.4f}", file)
+            self._write_and_print(f"F1-Score (Geometric, Weighted)               : {fsg_weighted:.4f}", file)
             self._write_and_print(f"G-Mean strict                                : {gmean_strict:.4f}", file)
             self._write_and_print(f"G-Mean smoothed (1e-3)                       : {gmean_smoothed:.4f}", file)
             self._write_and_print(f"AUC-ROC (Macro, One-vs-Rest)                 : {macro_auc_roc:.4f}", file)
-            self._write_and_print(f"AUC-ROC (Pondéré)                            : {weighted_auc_roc:.4f}", file)
+            self._write_and_print(f"AUC-ROC (Weighted)                           : {weighted_auc_roc:.4f}", file)
             self._write_and_print(f"AUC-PR  (Macro, One-vs-Rest)                 : {auc_pr_macro:.4f}", file)
             
-            self._write_and_print("\nRapport détaillé par classe :", file)
+            self._write_and_print("\nDetailed class report :", file)
             report = classification_report(real_events, gen_events, zero_division=0)
             self._write_and_print(report, file)
 
-        # Retour structuré pour le calcul du ranking multi-configuration
         return {
             "accuracy_globale": accuracy_globale,
             "accuracy_minoritaire": accuracy_minoritaire,
@@ -315,18 +314,18 @@ class DatasetEvaluator:
 
     def distribution_plots(self, file_img="population_distribution.png", file_txt="evaluation.txt", display_screen=True):
         """
-        Génère les histogrammes de distribution pour chaque variable continue,
-        calcule le pourcentage d'overlap et l'écrit dans le rapport final.
+        Generates distribution histograms for each continuous variable,
+        calculates the overlap percentage and writes it to the final report.
         """
         cols_grid = int(np.ceil(len(self.col_names) / 2))
         fig, axes = plt.subplots(2, cols_grid, figsize=(16, 9))
-        fig.suptitle(f"Comparaison des Distributions (Population : {self.num_patients} patients)", fontsize=16)
+        fig.suptitle(f"Comparison of Distributions (Population : {self.num_patients} patients)", fontsize=16)
         axes = axes.flatten()
         
         full_txt_path = f"{self.path}{file_txt}"
         
         with open(full_txt_path, "a", encoding="utf-8") as f:
-            f.write("\n=== OVERLAP DES DISTRIBUTIONS (INTERSECTION DES DENSITÉS) ===\n\n")
+            f.write("\n=== OVERLAP OF DISTRIBUTIONS (INTERSECTION OF DENSITIES) ===\n\n")
 
         for plot_idx, idx in enumerate(self.col_indices):
             col_name = self.col_names[idx]
@@ -364,21 +363,21 @@ class DatasetEvaluator:
         plt.tight_layout()
         os.makedirs(self.path, exist_ok=True)
         plt.savefig(f"{self.path}{file_img}")
-        print(f"[INFO] Graphique de distribution sauvegardé dans : {self.path}{file_img}")
+        print(f"[INFO] Distribution plot saved at : {self.path}{file_img}")
         
         if display_screen and not os.environ.get("NO_PLOT"):
             plt.show()
 
     def run_full_analysis(self, plot=False):
         """
-        Exécute l'ensemble du protocole et génère le fichier texte et l'image.
+        Executes the entire protocol and generates the text file and image.
         """
         os.makedirs(self.path, exist_ok=True)
         full_txt_path = f"{self.path}{self.output_file}"
         
         with open(full_txt_path, "w", encoding="utf-8") as file:
             self._write_and_print("====================================================================================", file)
-            self._write_and_print("                             RAPPORT D'ÉVALUATION                                   ", file)
+            self._write_and_print("                               EVALUATION REPORT                                    ", file)
             self._write_and_print("====================================================================================\n", file)
             
             cont_metrics = self.evaluate_continuous_variables(file)
@@ -388,6 +387,6 @@ class DatasetEvaluator:
         if plot:
             self.distribution_plots()
 
-        print(f"[INFO] Analyse globale terminée. Résultats dans '{self.path}'.")
+        print(f"[INFO] Global analysis completed. Results in '{self.path}'.")
 
         return cont_metrics, cat_metrics

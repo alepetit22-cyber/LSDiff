@@ -6,8 +6,7 @@ from torch.nn.utils.parametrizations import spectral_norm
 
 class ResBlock1D(nn.Module):
     """
-    Bloc résiduel pour stabiliser l'apprentissage des signaux complexes.
-    Toutes les dimensions et paramètres (kernel_size, padding, num_groups, dropout) sont configurables.
+    Two-conv residual block with GroupNorm, SiLU, and dropout for 1D signals.
     """
     def __init__(self, channels: int, dropout: float, kernel_size: int, padding: int, num_groups: int):
         super().__init__()
@@ -25,7 +24,7 @@ class ResBlock1D(nn.Module):
 
 class AttentionBlock(nn.Module):
     """
-    Attention globale pour corréler les constantes vitales sur toute la séquence.
+    Multi-head self-attention over the time axis, with residual connection and GroupNorm.
     """
     def __init__(self, channels: int, num_heads: int, num_groups: int):
         super().__init__()
@@ -33,16 +32,16 @@ class AttentionBlock(nn.Module):
         self.norm = nn.GroupNorm(num_groups, channels)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: [B, C, L] -> transpose pour MultiheadAttention [B, L, C]
+        # x: [B, C, L] -> transpose for MultiheadAttention [B, L, C]
         h = x.transpose(1, 2)
         attn_out, _ = self.attn(h, h, h)
         h = h + attn_out
-        # Retour en [B, C, L]
+        # Return to [B, C, L]
         return self.norm(h.transpose(1, 2))
 
 class MixedInputProjection(nn.Module):
     """
-    Projette un batch (flottant unifié) vers la dimension attendue.
+    Concatenates embedded categorical features to continuous inputs along the channel axis.
     """
     def __init__(self, cat_mode: str = "duplicated",
                 cat_vocab_sizes: Optional[int] = None,
@@ -69,7 +68,7 @@ class MixedInputProjection(nn.Module):
 
 class VAE1D(nn.Module):
     """
-    Variational Autoencoder 1D pour la compression des séries temporelles (mixtes).
+    Variational Autoencoder 1D for time series compression (mixed).
     """
     def __init__(
         self, 
@@ -132,7 +131,7 @@ class VAE1D(nn.Module):
             AttentionBlock(enc_hidden_dims[1], num_heads, num_groups),
             ResBlock1D(enc_hidden_dims[1], dropout, kernel_size_res, padding, num_groups),
             
-            # Projection latente finale
+            # Final latent projection
             nn.Conv1d(enc_hidden_dims[1], latent_channel * 2, kernel_size=kernel_size_res, padding=padding)
         )
         
@@ -140,7 +139,7 @@ class VAE1D(nn.Module):
         self.decoder_input = nn.Conv1d(latent_channel, dec_hidden_dims[0], kernel_size=kernel_size_res, padding=padding)
         
         self.decoder_trunk = nn.Sequential(
-            # Tronc initial
+            # Initial trunk
             ResBlock1D(dec_hidden_dims[0], dropout, kernel_size_res, padding, num_groups),
             AttentionBlock(dec_hidden_dims[0], num_heads, num_groups),
             nn.SiLU(),
@@ -157,7 +156,7 @@ class VAE1D(nn.Module):
             nn.SiLU()
         )
         
-        # Tête de sortie
+        # Output head
         self.head_output_float = nn.Conv1d(dec_hidden_dims[2], num_input_channels, kernel_size=kernel_size_res, padding=padding)
         if cat_mode == "embedded" and len(self.cat_vocab_sizes) > 0:
             self.head_cat_logits = nn.ModuleList([
@@ -185,7 +184,7 @@ class VAE1D(nn.Module):
 
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
-        Reparamétrisation avec clamping dynamique.
+        Reparametrization with dynamic clamping.
         """
         logvar = torch.clamp(logvar, min=self.logvar_clip_min, max=self.logvar_clip_max)
         std = torch.exp(0.5 * logvar)
@@ -198,7 +197,7 @@ class VAE1D(nn.Module):
         recon_float = self.head_output_float(trunk)
         
         if self.cat_mode == "embedded" and self.head_cat_logits is not None:
-            # Liste de logits [B, Num_Classes_i, L] pour chaque variable catégorielle
+            # List of logits [B, Num_Classes_i, L] for each categorical variable
             cat_logits = [head(trunk) for head in self.head_cat_logits]
             return recon_float, cat_logits
             

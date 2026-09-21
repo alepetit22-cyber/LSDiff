@@ -17,7 +17,7 @@ from autoencoder import VAE1D
 from loss_functions import HybridVAELoss
 from metrics import DatasetEvaluator
 
-# Configuration du logging
+# Logging configuration
 for handler in logging.root.handlers[:]:
     logging.root.removeHandler(handler)
 
@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 def main():
 
     ###################################################
-    # CONFIGURATION DU PARSER
+    # PARSER CONFIGURATION
     ###################################################
-    # Paramètres selon le mode
-    parser = argparse.ArgumentParser(description="Entraînement des VAE de LSDiff")
-    parser.add_argument("--config", type=str, default=None, help="Chemin du fichier config.yaml")
-    parser.add_argument("--mode", type=str, choices=["main", "history"], required=True, help="Mode d'entraînement")
+    # Parameters according to mode
+    parser = argparse.ArgumentParser(description="Training of VAEs from LSDiff")
+    parser.add_argument("--config", type=str, default=None, help="Path to config.yaml file")
+    parser.add_argument("--mode", type=str, choices=["main", "history"], required=True, help="Training mode")
     args = parser.parse_args()
     if args.mode == "main":
         config = load_config(args.config)
@@ -59,12 +59,12 @@ def main():
     exp_dir = os.path.dirname(checkpoint_dir)
 
     ###################################################
-    # CONFIGURATION DU DATASET
+    # DATASET CONFIGURATION
     ###################################################
     with open(config.dataset.json_path, 'r', encoding='utf-8') as f:
         all_patients_raw = json.load(f)
 
-    # Récupération des identifiants
+    # Retrieval of identifiers
     all_patient_ids = [p.get("patient_id", f"unknown_{i}") for i, p in enumerate(all_patients_raw)]
 
     seed = 42
@@ -83,12 +83,12 @@ def main():
     val_ids   = set(unique_patients[int(train_ratio * n):int((train_ratio + val_ratio) * n)])
     test_ids  = set(unique_patients[int((train_ratio + val_ratio) * n):])
 
-    # Filtrage des données brutes pour chaque ensemble
+    # Filtering raw data for each set
     train_raw = [p for p in all_patients_raw if p.get("patient_id", "unknown") in train_ids]
     val_raw   = [p for p in all_patients_raw if p.get("patient_id", "unknown") in val_ids]
     test_raw  = [p for p in all_patients_raw if p.get("patient_id", "unknown") in test_ids]
 
-    # Création des datasets
+    # Creation of datasets
     common_params = {
         "target_len": config.dataset.target_len,
         "hist_len": config.dataset.hist_len,
@@ -124,7 +124,7 @@ def main():
     )
     test_dataset = torch.utils.data.Subset(test_dataset, range(1000))
 
-    # Création des DataLoaders
+    # Creation of DataLoaders
     train_loader = DataLoader(
         train_dataset, 
         batch_size=config.training.batch_size, 
@@ -154,7 +154,7 @@ def main():
     )
 
     ###################################################
-    # CONFIGURATION DU VAE
+    # VAE CONFIGURATION
     ###################################################
     cat_vocab_sizes = [
         len(train_dataset.cat_vocabs[col]) for col in config.dataset.categorical_indices
@@ -183,7 +183,7 @@ def main():
     )
     model = model.to(device)
 
-    # Optimiseur
+    # Optimizer
     optimizer = optim.AdamW(
         model.parameters(),
         lr=config.training.lr_vae,
@@ -203,17 +203,17 @@ def main():
         cce_weight=vae_config.cce_weight,
     )
 
-    logger.info(f"Nombre de séquences d'entraînement : {len(train_dataset)}")
-    logger.info(f"Nombre de séquences de validation : {len(val_dataset)}")
-    logger.info(f"Nombre de séquences de test : {len(test_dataset)}")
+    logger.info(f"Number of training sequences: {len(train_dataset)}")
+    logger.info(f"Number of validation sequences: {len(val_dataset)}")
+    logger.info(f"Number of test sequences: {len(test_dataset)}")
 
     ###################################################
-    # ENTRAINEMENT
+    # TRAINING
     ###################################################
     logger.info("=" * 60)
-    logger.info("[Début de l'entraînement]")
+    logger.info("[Start of training]")
     debut_train = time.time()
-    logger.info(f"Heure de début de l'entraînement ({args.mode}) : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Start time of training ({args.mode}) : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     best_val_mse = float('inf')
     
@@ -279,7 +279,7 @@ def main():
                 val_metrics["kld"]  += kld.item()
                 val_metrics["spec"] += spec.item()
 
-        # Moyennes
+        # Means
         for k in train_metrics: train_metrics[k] /= len(train_loader)
         for k in val_metrics: val_metrics[k] /= len(val_loader)
         
@@ -292,30 +292,30 @@ def main():
                   f"| KLD: {train_metrics['kld']:.0f}/{val_metrics['kld']:.0f} "
                   f"| SPEC: {train_metrics['spec']:.4f}/{val_metrics['spec']:.6f} ")
 
-        # Sauvegarde
+        # Save
         if val_metrics["mse"] < best_val_mse:
             best_val_mse = val_metrics["mse"]
             torch.save(model.state_dict(), vae_config.best_model_path)
-            logger.info(f"Nouveau meilleur modèle sauvegardé avec Val MSE: {best_val_mse:.6f}")
+            logger.info(f"New best model saved with Val MSE: {best_val_mse:.6f}")
             
     torch.save(model.state_dict(), vae_config.checkpoint_path)
     fin_train = time.time()
-    logger.info(f"[Entraînement terminé] Meilleure Val Loss: {best_val_mse:.6f}")
-    logger.info(f"Heure de fin de l'entraînement : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"[Training completed] Best Val Loss: {best_val_mse:.6f}")
+    logger.info(f"End time of training : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     ###################################################
     # INFERENCE
     ###################################################
     logger.info("=" * 60)
-    logger.info("[Début de l'inférence]")
+    logger.info("[Start of inference]")
     debut_inf = time.time()
-    logger.info(f"Heure de début de l'inférence : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Start time of inference : {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     model.eval()
     real_data_list = []
     gen_data_list = []
 
-    logger.info(f"Extraction des données en cours ({args.mode})")
+    logger.info("Extracting data (mode)")
 
     with torch.no_grad():
         for x_float, hist_float, _, x_cat, hist_cat, _ in test_loader:
@@ -327,7 +327,7 @@ def main():
             recon_float, recon_cat_logits = model.decode(model.encode(inputs_float, inputs_cat)[0])
 
             if config.dataset.cat_mode == "embedded" and recon_cat_logits is not None:
-                # Prédiction Argmax pour les catégories
+                # Argmax prediction for categoricals
                 cat_preds = torch.stack([logits.argmax(dim=1) for logits in recon_cat_logits], dim=1) # [B, Num_Cat, L]
                 inputs_full = torch.cat([inputs_float, inputs_cat], dim=1)
                 recon_full  = torch.cat([recon_float, cat_preds.float()], dim=1)
@@ -335,19 +335,19 @@ def main():
                 inputs_full = inputs_float
                 recon_full  = recon_float
 
-            # Stockage en NumPy (conversion CPU + détachement du graphe)
+            # Store as NumPy
             real_data_list.append(inputs_full.cpu().numpy())
             gen_data_list.append(recon_full.cpu().numpy())
 
-    # Concaténation des batchs
+    # Concatenate batches
     real_np = np.concatenate(real_data_list, axis=0)
     gen_np = np.concatenate(gen_data_list, axis=0)
 
-    # Dénormalisation
+    # Denormalization
     real_denorm = train_dataset.denormalize(np.transpose(real_np, (0, 2, 1)))
     recon_denorm = train_dataset.denormalize(np.transpose(gen_np, (0, 2, 1)))
 
-    # Aggrégation des variables catégorielles
+    # Aggregation of categorical variables
     if config.dataset.cat_mode == "duplicated" and train_dataset.num_categorical > 0:
         real_cat_agg = train_dataset.aggregate_cat_duplicates(real_denorm)
         recon_cat_agg = train_dataset.aggregate_cat_duplicates(recon_denorm)
@@ -359,12 +359,12 @@ def main():
         gen_data = recon_denorm
 
     fin_inf = time.time()
-    logger.info("[Inférence terminée]")
-    logger.info(f"Heure de fin de l'inférence : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("[Inference completed]")
+    logger.info(f"End time of inference : {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    # Clip de la SpO2
+    # Clip SpO2
     gen_data[:,:,5] = np.clip(gen_data[:,:,5], a_min=0.0, a_max=100.0)
-    # Arrondi des événements
+    # Round events
     gen_data[:,:,7] = np.round(gen_data[:, :, 7])
 
     real_path = f"{config.inference.vae_real_path}_{args.mode}.npy"
@@ -373,23 +373,23 @@ def main():
     np.save(real_path, real_data)
     np.save(gen_path, gen_data)
 
-    logger.info(f"Sauvegarde terminée avec succès")
-    logger.info(f"Fichier Réel    : {real_path} (Shape: {real_data.shape})")
-    logger.info(f"Fichier Généré  : {gen_path} (Shape: {gen_data.shape})")
+    logger.info(f"Save completed successfully")
+    logger.info(f"Real file      : {real_path} (Shape: {real_data.shape})")
+    logger.info(f"Generated file : {gen_path} (Shape: {gen_data.shape})")
     
-    # Calcul du temps
+    # Calculate time
     durée_train = fin_train - debut_train
     durée_inf = fin_inf - debut_inf
 
-    # Formatage en minutes:secondes
+    # Format in minutes:seconds
     m_train, s_train = divmod(durée_train, 60)
     m_inf, s_inf = divmod(durée_inf, 60)
 
     logger.info("=" * 60)
-    logger.info("[Evaluation de la durée d'entrainement et d'inférece]")
-    logger.info(f"Temps d'entraînement : {int(m_train)} min {int(s_train)} s (Total: {durée_train:.2f} secondes)")
-    logger.info(f"Temps d'inférence    : {int(m_inf)} min {int(s_inf)} s (Total: {durée_inf:.2f} secondes)")
-    logger.info(f"Temps total du run   : {int((durée_train + durée_inf) // 60)} min {int((durée_train + durée_inf) % 60)} s")
+    logger.info("[Evaluation of training and inference duration]")
+    logger.info(f"Training time : {int(m_train)} min {int(s_train)} s (Total: {durée_train:.2f} seconds)")
+    logger.info(f"Inference time    : {int(m_inf)} min {int(s_inf)} s (Total: {durée_inf:.2f} seconds)")
+    logger.info(f"Total run time   : {int((durée_train + durée_inf) // 60)} min {int((durée_train + durée_inf) % 60)} s")
     logger.info("=" * 60)
 
     ###################################################
